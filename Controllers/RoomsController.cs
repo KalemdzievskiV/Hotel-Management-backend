@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using HotelManagement.Models.Constants;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Enums;
@@ -15,20 +16,39 @@ namespace HotelManagement.Controllers;
 public class RoomsController : CrudController<RoomDto>
 {
     private readonly IRoomService _roomService;
+    private readonly IHotelService _hotelService;
 
-    public RoomsController(IRoomService service) : base(service)
+    public RoomsController(IRoomService service, IHotelService hotelService) : base(service)
     {
         _roomService = service;
+        _hotelService = hotelService;
     }
 
     /// <summary>
     /// Get all rooms (SuperAdmin/Admin/Manager only)
+    /// Filters by user's hotels for non-SuperAdmin users
     /// </summary>
     [HttpGet]
     [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
     public override async Task<IActionResult> GetAllAsync()
     {
-        return Ok(await _roomService.GetAllAsync());
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var isSuperAdmin = User.IsInRole(AppRoles.SuperAdmin);
+        
+        if (isSuperAdmin)
+        {
+            // SuperAdmin sees all rooms
+            return Ok(await _roomService.GetAllAsync());
+        }
+        
+        // Regular admin/manager sees only rooms from their hotels
+        var userHotels = await _hotelService.GetAllHotelsForUserAsync(userId!, isSuperAdmin: false);
+        var hotelIds = userHotels.Select(h => h.Id).ToList();
+        
+        var allRooms = await _roomService.GetAllAsync();
+        var filteredRooms = allRooms.Where(r => hotelIds.Contains(r.HotelId));
+        
+        return Ok(filteredRooms);
     }
 
     /// <summary>

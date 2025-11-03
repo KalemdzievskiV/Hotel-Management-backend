@@ -1,4 +1,5 @@
 using AutoMapper;
+using HotelManagement.Data;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Repositories.Interfaces;
@@ -11,13 +12,32 @@ public class HotelService : CrudService<Hotel, HotelDto>, IHotelService
 {
     private readonly IGenericRepository<Hotel> _hotelRepository;
     private readonly IMapper _mapper;
+    private readonly ApplicationDbContext _context;
 
     public HotelService(
         IGenericRepository<Hotel> repository,
-        IMapper mapper) : base(repository, mapper)
+        IMapper mapper,
+        ApplicationDbContext context) : base(repository, mapper)
     {
         _hotelRepository = repository;
         _mapper = mapper;
+        _context = context;
+    }
+    
+    public override async Task<IEnumerable<HotelDto>> GetAllAsync()
+    {
+        var hotels = await _context.Hotels
+            .Include(h => h.Owner)
+            .ToListAsync();
+        return _mapper.Map<IEnumerable<HotelDto>>(hotels);
+    }
+    
+    public override async Task<HotelDto?> GetByIdAsync(int id)
+    {
+        var hotel = await _context.Hotels
+            .Include(h => h.Owner)
+            .FirstOrDefaultAsync(h => h.Id == id);
+        return hotel == null ? null : _mapper.Map<HotelDto>(hotel);
     }
 
     public override async Task<HotelDto> CreateAsync(HotelDto dto)
@@ -34,12 +54,19 @@ public class HotelService : CrudService<Hotel, HotelDto>, IHotelService
         await _hotelRepository.AddAsync(hotel);
         await _hotelRepository.SaveAsync();
         
-        return _mapper.Map<HotelDto>(hotel);
+        // Reload with Owner to map OwnerName
+        var createdHotel = await _context.Hotels
+            .Include(h => h.Owner)
+            .FirstOrDefaultAsync(h => h.Id == hotel.Id);
+        
+        return _mapper.Map<HotelDto>(createdHotel ?? hotel);
     }
 
     public override async Task<HotelDto> UpdateAsync(int id, HotelDto dto)
     {
-        var existingHotel = await _hotelRepository.GetByIdAsync(id);
+        var existingHotel = await _context.Hotels
+            .Include(h => h.Owner)
+            .FirstOrDefaultAsync(h => h.Id == id);
         
         if (existingHotel == null)
         {
@@ -89,25 +116,24 @@ public class HotelService : CrudService<Hotel, HotelDto>, IHotelService
 
     public async Task<IEnumerable<HotelDto>> GetHotelsByOwnerAsync(string ownerId)
     {
-        var hotels = await _hotelRepository.FindAsync(h => h.OwnerId == ownerId);
+        var hotels = await _context.Hotels
+            .Include(h => h.Owner)
+            .Where(h => h.OwnerId == ownerId)
+            .ToListAsync();
         return _mapper.Map<IEnumerable<HotelDto>>(hotels);
     }
 
     public async Task<IEnumerable<HotelDto>> GetAllHotelsForUserAsync(string userId, bool isSuperAdmin)
     {
-        IEnumerable<Hotel> hotels;
+        IQueryable<Hotel> query = _context.Hotels.Include(h => h.Owner);
         
-        if (isSuperAdmin)
-        {
-            // SuperAdmin sees all hotels
-            hotels = await _hotelRepository.GetAllAsync();
-        }
-        else
+        if (!isSuperAdmin)
         {
             // Regular admins see only their hotels
-            hotels = await _hotelRepository.FindAsync(h => h.OwnerId == userId);
+            query = query.Where(h => h.OwnerId == userId);
         }
         
+        var hotels = await query.ToListAsync();
         return _mapper.Map<IEnumerable<HotelDto>>(hotels);
     }
 }

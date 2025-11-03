@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using HotelManagement.Models.Constants;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Enums;
@@ -16,10 +17,12 @@ namespace HotelManagement.Controllers;
 public class ReservationsController : ControllerBase
 {
     private readonly IReservationService _reservationService;
+    private readonly IHotelService _hotelService;
 
-    public ReservationsController(IReservationService reservationService)
+    public ReservationsController(IReservationService reservationService, IHotelService hotelService)
     {
         _reservationService = reservationService;
+        _hotelService = hotelService;
     }
 
     /// <summary>
@@ -44,13 +47,30 @@ public class ReservationsController : ControllerBase
 
     /// <summary>
     /// Get all reservations (Admin/Manager only)
+    /// Filters by user's hotels for non-SuperAdmin users
     /// </summary>
     [HttpGet]
     [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
     public async Task<IActionResult> GetAllReservations()
     {
-        var reservations = await _reservationService.GetAllReservationsAsync();
-        return Ok(reservations);
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var isSuperAdmin = User.IsInRole(AppRoles.SuperAdmin);
+        
+        if (isSuperAdmin)
+        {
+            // SuperAdmin sees all reservations
+            var reservations = await _reservationService.GetAllReservationsAsync();
+            return Ok(reservations);
+        }
+        
+        // Regular admin/manager sees only reservations from their hotels
+        var userHotels = await _hotelService.GetAllHotelsForUserAsync(userId!, isSuperAdmin: false);
+        var hotelIds = userHotels.Select(h => h.Id).ToList();
+        
+        var allReservations = await _reservationService.GetAllReservationsAsync();
+        var filteredReservations = allReservations.Where(r => hotelIds.Contains(r.HotelId));
+        
+        return Ok(filteredReservations);
     }
 
     /// <summary>

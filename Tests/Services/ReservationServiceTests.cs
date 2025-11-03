@@ -178,7 +178,7 @@ public class ReservationServiceTests
     }
 
     [Fact]
-    public async Task CreateReservationAsync_InvalidDates_ThrowsException()
+    public async Task CreateReservationAsync_InvalidDates_OvernightStay_ThrowsException()
     {
         // Arrange
         await SeedTestData();
@@ -196,7 +196,35 @@ public class ReservationServiceTests
         // Act & Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             () => _service.CreateReservationAsync(createDto));
-        Assert.Contains("Check-out date must be after check-in date", exception.Message);
+        Assert.Contains("Check-out date must be after check-in date for overnight stays", exception.Message);
+    }
+
+    [Fact]
+    public async Task CreateReservationAsync_SameDayShortStay_Succeeds()
+    {
+        // Arrange
+        await SeedTestData();
+        var checkIn = DateTime.UtcNow.AddDays(1).Date.AddHours(10); // 10 AM
+        var checkOut = checkIn.AddHours(3); // 1 PM same day
+        
+        var createDto = new CreateReservationDto
+        {
+            HotelId = 1,
+            RoomId = 1,
+            GuestId = 1,
+            BookingType = BookingType.ShortStay,
+            CheckInDate = checkIn,
+            CheckOutDate = checkOut,
+            NumberOfGuests = 2
+        };
+
+        // Act
+        var result = await _service.CreateReservationAsync(createDto);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(checkIn, result.CheckInDate);
+        Assert.Equal(checkOut, result.CheckOutDate);
     }
 
     [Fact]

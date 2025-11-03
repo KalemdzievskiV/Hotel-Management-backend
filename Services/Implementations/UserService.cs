@@ -243,9 +243,25 @@ public class UserService : Services.Interfaces.IUserService
         if (user == null)
             throw new KeyNotFoundException($"User with ID {userId} not found");
 
-        var result = await _userManager.DeleteAsync(user);
-        if (!result.Succeeded)
-            throw new InvalidOperationException($"Failed to delete user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+        try
+        {
+            var result = await _userManager.DeleteAsync(user);
+            if (!result.Succeeded)
+                throw new InvalidOperationException($"Failed to delete user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+        }
+        catch (DbUpdateException ex)
+        {
+            // Check if it's a foreign key constraint violation
+            if (ex.InnerException?.Message.Contains("FK_") == true || 
+                ex.InnerException?.Message.Contains("REFERENCE constraint") == true)
+            {
+                throw new InvalidOperationException(
+                    "Cannot delete this user because they own hotels or have related data. " +
+                    "Please reassign or remove their hotels before deleting the user.");
+            }
+            
+            throw; // Re-throw if it's a different type of error
+        }
     }
 
     public async Task AssignUserToHotelAsync(string userId, int? hotelId)

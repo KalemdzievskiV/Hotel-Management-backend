@@ -59,9 +59,19 @@ public class ReservationService : IReservationService
         if (createDto.BookingType == BookingType.ShortStay && !room.AllowsShortStay)
             throw new InvalidOperationException($"Room {room.RoomNumber} does not support short-stay bookings");
 
-        // Validate dates
-        if (createDto.CheckOutDate <= createDto.CheckInDate)
-            throw new InvalidOperationException("Check-out date must be after check-in date");
+        // Validate dates based on booking type
+        if (createDto.BookingType == BookingType.ShortStay)
+        {
+            // For short stays, allow same-day bookings but check-out must be after check-in (time-wise)
+            if (createDto.CheckOutDate <= createDto.CheckInDate)
+                throw new InvalidOperationException("Check-out time must be after check-in time");
+        }
+        else
+        {
+            // For overnight stays, check-out must be on a later date
+            if (createDto.CheckOutDate.Date <= createDto.CheckInDate.Date)
+                throw new InvalidOperationException("Check-out date must be after check-in date for overnight stays");
+        }
 
         // Validate short-stay duration
         if (createDto.BookingType == BookingType.ShortStay)
@@ -172,9 +182,19 @@ public class ReservationService : IReservationService
         if (reservation.Status != ReservationStatus.Pending && reservation.Status != ReservationStatus.Confirmed)
             throw new InvalidOperationException($"Cannot update reservation with status {reservation.Status}");
 
-        // Validate dates
-        if (updateDto.CheckOutDate <= updateDto.CheckInDate)
-            throw new InvalidOperationException("Check-out date must be after check-in date");
+        // Validate dates based on booking type
+        if (reservation.BookingType == BookingType.ShortStay)
+        {
+            // For short stays, allow same-day bookings but check-out must be after check-in (time-wise)
+            if (updateDto.CheckOutDate <= updateDto.CheckInDate)
+                throw new InvalidOperationException("Check-out time must be after check-in time");
+        }
+        else
+        {
+            // For overnight stays, check-out must be on a later date
+            if (updateDto.CheckOutDate.Date <= updateDto.CheckInDate.Date)
+                throw new InvalidOperationException("Check-out date must be after check-in date for overnight stays");
+        }
 
         // Check availability if dates changed
         if (reservation.CheckInDate != updateDto.CheckInDate || reservation.CheckOutDate != updateDto.CheckOutDate)
