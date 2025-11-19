@@ -1,6 +1,8 @@
 using System.Security.Claims;
+using HotelManagement.Authorization.Requirements;
 using HotelManagement.Models.Constants;
 using HotelManagement.Models.DTOs;
+using HotelManagement.Models.Entities;
 using HotelManagement.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,33 +12,60 @@ namespace HotelManagement.Controllers
     public class HotelsController : CrudController<HotelDto>
     {
         private readonly IHotelService _hotelService;
+        private readonly IAuthorizationService _authorizationService;
 
-        public HotelsController(IHotelService service) : base(service)
+        public HotelsController(IHotelService service, IAuthorizationService authorizationService) : base(service)
         {
             _hotelService = service;
+            _authorizationService = authorizationService;
         }
 
         /// <summary>
-        /// Get all hotels (filtered by ownership for Admins, all for SuperAdmin)
+        /// Get all hotels (automatically filtered by ownership in service layer)
+        /// Staff only - shows hotels they manage/own
         /// </summary>
         [HttpGet]
-        [Authorize]
+        [Authorize(Policy = "ManagerOrAbove")] // SuperAdmin, Admin, Manager can view hotels
         public override async Task<IActionResult> GetAllAsync()
         {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-            var isSuperAdmin = User.IsInRole(AppRoles.SuperAdmin);
-            
-            var hotels = await _hotelService.GetAllHotelsForUserAsync(userId, isSuperAdmin);
+            // Service layer automatically filters by ownership
+            var hotels = await _hotelService.GetAllAsync();
             return Ok(hotels);
         }
 
         /// <summary>
-        /// Create a new hotel (OwnerId is set from authenticated user)
+        /// Get all hotels for public browsing (guests/availability checking)
+        /// Returns ALL hotels without ownership filtering
+        /// </summary>
+        [HttpGet("public")]
+        [Authorize] // Any authenticated user (including guests) can view all hotels
+        public async Task<IActionResult> GetAllPublicAsync()
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var isGuest = User.IsInRole(AppRoles.Guest);
+            
+            // Guests get all hotels, staff get filtered by ownership
+            var hotels = isGuest 
+                ? await _hotelService.GetAllHotelsUnfilteredAsync()
+                : await _hotelService.GetAllAsync();
+            
+            return Ok(hotels);
+        }
+
+        /// <summary>
+        /// Create a new hotel (only SuperAdmin and Admin can create)
         /// </summary>
         [HttpPost]
-        [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+        [Authorize(Policy = "AdminOnly")] // Only SuperAdmin and Admin can create hotels
         public override async Task<IActionResult> CreateAsync([FromBody] HotelDto dto)
         {
+            // Check authorization using policy
+            var authResult = await _authorizationService.AuthorizeAsync(User, null, new ManageHotelRequirement());
+            if (!authResult.Succeeded)
+            {
+                return Forbid();
+            }
+
             // Set OwnerId from authenticated user
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
             dto.OwnerId = userId;
@@ -46,25 +75,26 @@ namespace HotelManagement.Controllers
         }
 
         /// <summary>
-        /// Update a hotel (only if user is owner or SuperAdmin)
+        /// Update a hotel (only SuperAdmin and Admin can update their own hotels)
         /// </summary>
         [HttpPut("{id:int}")]
-        [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+        [Authorize(Policy = "AdminOnly")] // Only SuperAdmin and Admin can update
         public override async Task<IActionResult> UpdateAsync(int id, [FromBody] HotelDto dto)
         {
-            // Get the hotel to check ownership
+            // Get the hotel (service layer filters by ownership)
             var existingHotel = await _hotelService.GetByIdAsync(id);
             
             if (existingHotel == null)
-                return NotFound(new { message = $"Hotel with ID {id} not found" });
+                return NotFound(new { message = $"Hotel with ID {id} not found or you don't have access" });
             
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-            var isSuperAdmin = User.IsInRole(AppRoles.SuperAdmin);
+            // Create Hotel entity for authorization check
+            var hotel = new Hotel { Id = id, OwnerId = existingHotel.OwnerId };
             
-            // Check if user owns this hotel or is SuperAdmin
-            if (!isSuperAdmin && existingHotel.OwnerId != userId)
+            // Check authorization using resource-based policy
+            var authResult = await _authorizationService.AuthorizeAsync(User, hotel, new ManageHotelRequirement());
+            if (!authResult.Succeeded)
             {
-                return Forbid(); // 403 Forbidden
+                return Forbid();
             }
             
             var updated = await _hotelService.UpdateAsync(id, dto);
@@ -72,25 +102,26 @@ namespace HotelManagement.Controllers
         }
 
         /// <summary>
-        /// Delete a hotel (only if user is owner or SuperAdmin)
+        /// Delete a hotel (only SuperAdmin and Admin can delete their own hotels)
         /// </summary>
         [HttpDelete("{id:int}")]
-        [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin}")]
+        [Authorize(Policy = "AdminOnly")] // Only SuperAdmin and Admin can delete
         public override async Task<IActionResult> DeleteAsync(int id)
         {
-            // Get the hotel to check ownership
+            // Get the hotel (service layer filters by ownership)
             var existingHotel = await _hotelService.GetByIdAsync(id);
             
             if (existingHotel == null)
-                return NotFound(new { message = $"Hotel with ID {id} not found" });
+                return NotFound(new { message = $"Hotel with ID {id} not found or you don't have access" });
             
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-            var isSuperAdmin = User.IsInRole(AppRoles.SuperAdmin);
+            // Create Hotel entity for authorization check
+            var hotel = new Hotel { Id = id, OwnerId = existingHotel.OwnerId };
             
-            // Check if user owns this hotel or is SuperAdmin
-            if (!isSuperAdmin && existingHotel.OwnerId != userId)
+            // Check authorization using resource-based policy
+            var authResult = await _authorizationService.AuthorizeAsync(User, hotel, new ManageHotelRequirement());
+            if (!authResult.Succeeded)
             {
-                return Forbid(); // 403 Forbidden
+                return Forbid();
             }
             
             await _hotelService.DeleteAsync(id);

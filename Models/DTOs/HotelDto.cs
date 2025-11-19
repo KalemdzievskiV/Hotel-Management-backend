@@ -67,6 +67,10 @@ public class HotelDto
     [MaxLength(100)]
     public string? CheckOutTime { get; set; } = "11:00";
     
+    // Cleaning Buffer Time
+    [Range(0, 24, ErrorMessage = "Buffer time must be between 0 and 24 hours")]
+    public int BufferTimeHours { get; set; } = 3;
+    
     // Status
     public bool IsActive { get; set; } = true;
     

@@ -77,4 +77,10 @@ public interface IGuestService : ICrudService<GuestDto>
     /// (Walk-in guests they created + all registered users)
     /// </summary>
     Task<IEnumerable<GuestDto>> GetMyAccessibleGuestsAsync(string currentUserId);
+
+    /// <summary>
+    /// Get or create guest profile for a logged-in user
+    /// Returns existing guest if found by UserId, creates new one if not
+    /// </summary>
+    Task<GuestDto> GetOrCreateGuestProfileAsync(string userId);
 }

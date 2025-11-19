@@ -4,7 +4,9 @@ using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Repositories.Interfaces;
 using HotelManagement.Services.Interfaces;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace HotelManagement.Services.Implementations;
 
@@ -13,30 +15,79 @@ public class HotelService : CrudService<Hotel, HotelDto>, IHotelService
     private readonly IGenericRepository<Hotel> _hotelRepository;
     private readonly IMapper _mapper;
     private readonly ApplicationDbContext _context;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
     public HotelService(
         IGenericRepository<Hotel> repository,
         IMapper mapper,
-        ApplicationDbContext context) : base(repository, mapper)
+        ApplicationDbContext context,
+        IHttpContextAccessor httpContextAccessor) : base(repository, mapper)
     {
         _hotelRepository = repository;
         _mapper = mapper;
         _context = context;
+        _httpContextAccessor = httpContextAccessor;
+    }
+
+    /// <summary>
+    /// Gets the current user ID from the HTTP context
+    /// </summary>
+    private string? GetCurrentUserId()
+    {
+        return _httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier);
+    }
+
+    /// <summary>
+    /// Checks if the current user is a SuperAdmin
+    /// </summary>
+    private bool IsSuperAdmin()
+    {
+        return _httpContextAccessor.HttpContext?.User.IsInRole("SuperAdmin") ?? false;
     }
     
     public override async Task<IEnumerable<HotelDto>> GetAllAsync()
     {
-        var hotels = await _context.Hotels
-            .Include(h => h.Owner)
-            .ToListAsync();
+        var query = _context.Hotels.Include(h => h.Owner).AsQueryable();
+
+        // Filter by ownership unless SuperAdmin
+        if (!IsSuperAdmin())
+        {
+            var userId = GetCurrentUserId();
+            if (!string.IsNullOrEmpty(userId))
+            {
+                // Admin/Manager: Only see hotels they own
+                query = query.Where(h => h.OwnerId == userId);
+            }
+            else
+            {
+                // No user context: return empty
+                return Enumerable.Empty<HotelDto>();
+            }
+        }
+
+        var hotels = await query.ToListAsync();
         return _mapper.Map<IEnumerable<HotelDto>>(hotels);
     }
     
     public override async Task<HotelDto?> GetByIdAsync(int id)
     {
-        var hotel = await _context.Hotels
-            .Include(h => h.Owner)
-            .FirstOrDefaultAsync(h => h.Id == id);
+        var query = _context.Hotels.Include(h => h.Owner).AsQueryable();
+
+        // Filter by ownership unless SuperAdmin
+        if (!IsSuperAdmin())
+        {
+            var userId = GetCurrentUserId();
+            if (!string.IsNullOrEmpty(userId))
+            {
+                query = query.Where(h => h.OwnerId == userId);
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        var hotel = await query.FirstOrDefaultAsync(h => h.Id == id);
         return hotel == null ? null : _mapper.Map<HotelDto>(hotel);
     }
 
@@ -134,6 +185,19 @@ public class HotelService : CrudService<Hotel, HotelDto>, IHotelService
         }
         
         var hotels = await query.ToListAsync();
+        return _mapper.Map<IEnumerable<HotelDto>>(hotels);
+    }
+
+    /// <summary>
+    /// Gets all hotels without any ownership filtering
+    /// Used for public browsing (guest users looking for available hotels)
+    /// </summary>
+    public async Task<IEnumerable<HotelDto>> GetAllHotelsUnfilteredAsync()
+    {
+        var hotels = await _context.Hotels
+            .Include(h => h.Owner)
+            .ToListAsync();
+        
         return _mapper.Map<IEnumerable<HotelDto>>(hotels);
     }
 }

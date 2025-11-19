@@ -5,6 +5,7 @@ using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Repositories.Interfaces;
 using HotelManagement.Services.Implementations;
+using Microsoft.AspNetCore.Http;
 using Moq;
 using Xunit;
 
@@ -15,6 +16,7 @@ public class HotelServiceTests
     private readonly Mock<IGenericRepository<Hotel>> _mockRepository;
     private readonly Mock<IMapper> _mockMapper;
     private readonly Mock<ApplicationDbContext> _mockContext;
+    private readonly Mock<IHttpContextAccessor> _mockHttpContextAccessor;
     private readonly HotelService _service;
 
     public HotelServiceTests()
@@ -22,7 +24,8 @@ public class HotelServiceTests
         _mockRepository = new Mock<IGenericRepository<Hotel>>();
         _mockMapper = new Mock<IMapper>();
         _mockContext = new Mock<ApplicationDbContext>();
-        _service = new HotelService(_mockRepository.Object, _mockMapper.Object, _mockContext.Object);
+        _mockHttpContextAccessor = new Mock<IHttpContextAccessor>();
+        _service = new HotelService(_mockRepository.Object, _mockMapper.Object, _mockContext.Object, _mockHttpContextAccessor.Object);
     }
 
     #region CreateAsync Tests

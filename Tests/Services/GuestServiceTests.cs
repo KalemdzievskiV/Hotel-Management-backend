@@ -1,5 +1,6 @@
 using AutoMapper;
 using FluentAssertions;
+using HotelManagement.Data;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Repositories.Interfaces;
@@ -15,6 +16,7 @@ public class GuestServiceTests
     private readonly Mock<IGenericRepository<Guest>> _mockRepository;
     private readonly Mock<IMapper> _mockMapper;
     private readonly Mock<IHttpContextAccessor> _mockHttpContextAccessor;
+    private readonly Mock<ApplicationDbContext> _mockContext;
     private readonly GuestService _service;
 
     public GuestServiceTests()
@@ -22,7 +24,12 @@ public class GuestServiceTests
         _mockRepository = new Mock<IGenericRepository<Guest>>();
         _mockMapper = new Mock<IMapper>();
         _mockHttpContextAccessor = new Mock<IHttpContextAccessor>();
-        _service = new GuestService(_mockRepository.Object, _mockMapper.Object, _mockHttpContextAccessor.Object);
+        _mockContext = new Mock<ApplicationDbContext>();
+        _service = new GuestService(
+            _mockRepository.Object, 
+            _mockMapper.Object, 
+            _mockHttpContextAccessor.Object,
+            _mockContext.Object);
     }
 
     #region CreateAsync Tests

@@ -217,6 +217,22 @@ public class GuestsController : CrudController<GuestDto>
         var guests = await _guestService.GetGuestsCreatedByUserAsync(userId);
         return Ok(guests);
     }
+
+    /// <summary>
+    /// Get or create guest profile for current logged-in user
+    /// This allows guest users to get their GuestId for making reservations
+    /// </summary>
+    [HttpGet("me")]
+    [Authorize] // Any authenticated user
+    public async Task<IActionResult> GetOrCreateMyGuestProfileAsync()
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        var guest = await _guestService.GetOrCreateGuestProfileAsync(userId);
+        return Ok(guest);
+    }
 }
 
 /// <summary>

@@ -26,6 +26,7 @@ public interface IReservationService
     // Room Availability
     Task<bool> IsRoomAvailableAsync(int roomId, DateTime checkIn, DateTime checkOut, int? excludeReservationId = null);
     Task<IEnumerable<ReservationDto>> GetConflictingReservationsAsync(int roomId, DateTime checkIn, DateTime checkOut);
+    Task<IEnumerable<RoomDto>> GetAvailableRoomsAsync(int hotelId, DateTime checkIn, DateTime checkOut, BookingType bookingType, int? minCapacity = null, string? roomType = null);
     
     // Status Management
     Task<ReservationDto> ConfirmReservationAsync(int id);

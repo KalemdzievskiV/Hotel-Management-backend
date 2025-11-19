@@ -355,6 +355,9 @@ namespace HotelManagement.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
 
+                    b.Property<int>("BufferTimeHours")
+                        .HasColumnType("int");
+
                     b.Property<string>("CheckInTime")
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");

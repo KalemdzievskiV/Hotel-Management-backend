@@ -11,7 +11,10 @@ using HotelManagement.Services.Implementations;
 using HotelManagement.Infrastructure.Mapping;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
+using HotelManagement.Authorization.Handlers;
+using HotelManagement.Authorization.Requirements;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -96,6 +99,36 @@ namespace HotelManagement.Configurations
             // 9️⃣ FluentValidation
             services.AddFluentValidationAutoValidation();
             services.AddValidatorsFromAssemblyContaining<Program>();
+
+            // 🔟 Authorization Policies and Handlers
+            services.AddAuthorization(options =>
+            {
+                // Hotel management policies
+                options.AddPolicy("CanViewHotel", policy =>
+                    policy.Requirements.Add(new HotelOwnershipRequirement()));
+
+                options.AddPolicy("CanManageHotel", policy =>
+                    policy.Requirements.Add(new ManageHotelRequirement()));
+
+                // Reservation access policy
+                options.AddPolicy("CanAccessReservation", policy =>
+                    policy.Requirements.Add(new ReservationAccessRequirement()));
+
+                // Role-based policies for quick checks
+                options.AddPolicy("AdminOnly", policy =>
+                    policy.RequireRole("SuperAdmin", "Admin"));
+
+                options.AddPolicy("ManagerOrAbove", policy =>
+                    policy.RequireRole("SuperAdmin", "Admin", "Manager"));
+            });
+
+            // Register authorization handlers
+            services.AddScoped<IAuthorizationHandler, HotelOwnershipHandler>();
+            services.AddScoped<IAuthorizationHandler, HotelOwnershipByIdHandler>();
+            services.AddScoped<IAuthorizationHandler, ManageHotelHandler>();
+            services.AddScoped<IAuthorizationHandler, CreateHotelHandler>();
+            services.AddScoped<IAuthorizationHandler, ReservationAccessHandler>();
+            services.AddScoped<IAuthorizationHandler, ReservationAccessByIdHandler>();
 
             return services;
         }

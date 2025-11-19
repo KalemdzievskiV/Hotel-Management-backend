@@ -1,9 +1,11 @@
 using AutoMapper;
+using HotelManagement.Data;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Repositories.Interfaces;
 using HotelManagement.Services.Interfaces;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
 namespace HotelManagement.Services.Implementations;
@@ -13,16 +15,19 @@ public class GuestService : CrudService<Guest, GuestDto>, IGuestService
     private readonly IGenericRepository<Guest> _guestRepository;
     private readonly IMapper _mapper;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly ApplicationDbContext _context;
 
     public GuestService(
         IGenericRepository<Guest> repository, 
         IMapper mapper,
-        IHttpContextAccessor httpContextAccessor)
+        IHttpContextAccessor httpContextAccessor,
+        ApplicationDbContext context)
         : base(repository, mapper)
     {
         _guestRepository = repository;
         _mapper = mapper;
         _httpContextAccessor = httpContextAccessor;
+        _context = context;
     }
 
     public override async Task<GuestDto> CreateAsync(GuestDto dto)
@@ -208,5 +213,40 @@ public class GuestService : CrudService<Guest, GuestDto>, IGuestService
             g.UserId != null); // All registered users (available to everyone)
         
         return _mapper.Map<IEnumerable<GuestDto>>(guests);
+    }
+
+    public async Task<GuestDto> GetOrCreateGuestProfileAsync(string userId)
+    {
+        // Try to find existing guest by UserId
+        var existingGuest = await _context.Guests
+            .FirstOrDefaultAsync(g => g.UserId == userId);
+
+        if (existingGuest != null)
+        {
+            return _mapper.Map<GuestDto>(existingGuest);
+        }
+
+        // Guest doesn't exist, create new one from user data
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null)
+        {
+            throw new KeyNotFoundException($"User with ID {userId} not found");
+        }
+
+        var newGuest = new Guest
+        {
+            UserId = userId,
+            FirstName = user.FirstName,
+            LastName = user.LastName,
+            Email = user.Email ?? string.Empty,
+            PhoneNumber = user.PhoneNumber ?? string.Empty,
+            CreatedAt = DateTime.UtcNow,
+            IsActive = true
+        };
+
+        await _guestRepository.AddAsync(newGuest);
+        await _guestRepository.SaveAsync();
+
+        return _mapper.Map<GuestDto>(newGuest);
     }
 }

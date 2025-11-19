@@ -15,6 +15,9 @@ public class ReservationService : IReservationService
     private readonly ApplicationDbContext _context;
     private readonly IMapper _mapper;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    
+    // Buffer time in hours between check-out and next check-in for cleaning
+    private const int DEFAULT_BUFFER_HOURS = 3;
 
     public ReservationService(
         ApplicationDbContext context,
@@ -87,10 +90,10 @@ public class ReservationService : IReservationService
             createDto.DurationInHours = hours;
         }
 
-        // Check room availability
-        var isAvailable = await IsRoomAvailableAsync(createDto.RoomId, createDto.CheckInDate, createDto.CheckOutDate);
+        // Check room availability with detailed conflict info
+        var (isAvailable, conflictInfo) = await CheckAvailabilityWithDetailsAsync(createDto.RoomId, createDto.CheckInDate, createDto.CheckOutDate, createDto.BookingType);
         if (!isAvailable)
-            throw new InvalidOperationException($"Room {room.RoomNumber} is not available for the selected dates");
+            throw new InvalidOperationException($"Room {room.RoomNumber} is not available for the selected dates. {conflictInfo}");
 
         // Validate number of guests against room capacity
         if (createDto.NumberOfGuests > room.Capacity)
@@ -178,9 +181,26 @@ public class ReservationService : IReservationService
         if (reservation == null)
             throw new KeyNotFoundException($"Reservation with ID {id} not found");
 
-        // Only allow updates for pending or confirmed reservations
-        if (reservation.Status != ReservationStatus.Pending && reservation.Status != ReservationStatus.Confirmed)
+        // For checked-out or cancelled reservations, only allow updating notes, special requests, and payment reference
+        if (reservation.Status == ReservationStatus.CheckedOut || reservation.Status == ReservationStatus.Cancelled || reservation.Status == ReservationStatus.NoShow)
+        {
+            // Only update administrative fields
+            reservation.Notes = updateDto.Notes;
+            reservation.SpecialRequests = updateDto.SpecialRequests;
+            reservation.PaymentReference = updateDto.PaymentReference;
+            reservation.UpdatedAt = DateTime.UtcNow;
+            
+            await _context.SaveChangesAsync();
+            return MapToDto(reservation);
+        }
+
+        // For active reservations (Pending, Confirmed, CheckedIn), allow full updates
+        if (reservation.Status != ReservationStatus.Pending && 
+            reservation.Status != ReservationStatus.Confirmed && 
+            reservation.Status != ReservationStatus.CheckedIn)
+        {
             throw new InvalidOperationException($"Cannot update reservation with status {reservation.Status}");
+        }
 
         // Validate dates based on booking type
         if (reservation.BookingType == BookingType.ShortStay)
@@ -199,9 +219,9 @@ public class ReservationService : IReservationService
         // Check availability if dates changed
         if (reservation.CheckInDate != updateDto.CheckInDate || reservation.CheckOutDate != updateDto.CheckOutDate)
         {
-            var isAvailable = await IsRoomAvailableAsync(reservation.RoomId, updateDto.CheckInDate, updateDto.CheckOutDate, id);
+            var (isAvailable, conflictInfo) = await CheckAvailabilityWithDetailsAsync(reservation.RoomId, updateDto.CheckInDate, updateDto.CheckOutDate, reservation.BookingType, id);
             if (!isAvailable)
-                throw new InvalidOperationException("Room is not available for the new dates");
+                throw new InvalidOperationException($"Room is not available for the new dates. {conflictInfo}");
 
             // Recalculate price
             reservation.TotalAmount = CalculatePrice(reservation.Room, updateDto.CheckInDate, updateDto.CheckOutDate, reservation.BookingType);
@@ -335,16 +355,109 @@ public class ReservationService : IReservationService
 
     public async Task<bool> IsRoomAvailableAsync(int roomId, DateTime checkIn, DateTime checkOut, int? excludeReservationId = null)
     {
-        var conflictingReservations = await _context.Reservations
+        var (isAvailable, _) = await CheckAvailabilityWithDetailsAsync(roomId, checkIn, checkOut, BookingType.Daily, excludeReservationId);
+        return isAvailable;
+    }
+    
+    private async Task<(bool isAvailable, string conflictInfo)> CheckAvailabilityWithDetailsAsync(
+        int roomId, 
+        DateTime checkIn, 
+        DateTime checkOut, 
+        BookingType bookingType,
+        int? excludeReservationId = null)
+    {
+        // Get the hotel to fetch buffer time configuration
+        var room = await _context.Rooms
+            .Include(r => r.Hotel)
+            .FirstOrDefaultAsync(r => r.Id == roomId);
+        
+        if (room == null)
+            return (false, "Room not found");
+        
+        // Use hotel-specific buffer time, fallback to default if not set
+        int bufferHours = room.Hotel?.BufferTimeHours ?? DEFAULT_BUFFER_HOURS;
+        
+        var existingReservations = await _context.Reservations
+            .Include(r => r.Guest)
             .Where(r => r.RoomId == roomId
                 && r.Status != ReservationStatus.Cancelled
                 && r.Status != ReservationStatus.CheckedOut
                 && r.Status != ReservationStatus.NoShow
-                && (excludeReservationId == null || r.Id != excludeReservationId)
-                && ((r.CheckInDate < checkOut && r.CheckOutDate > checkIn)))
+                && (excludeReservationId == null || r.Id != excludeReservationId))
             .ToListAsync();
 
-        return !conflictingReservations.Any();
+        foreach (var existing in existingReservations)
+        {
+            bool hasConflict = false;
+            string conflictReason = "";
+
+            // Different logic for short-stay vs overnight bookings
+            if (bookingType == BookingType.ShortStay && existing.BookingType == BookingType.ShortStay)
+            {
+                // For short-stay bookings, check exact time overlap
+                if (checkIn < existing.CheckOutDate && checkOut > existing.CheckInDate)
+                {
+                    hasConflict = true;
+                    conflictReason = $"Overlaps with short-stay booking from {existing.CheckInDate:g} to {existing.CheckOutDate:g}";
+                }
+            }
+            else if (bookingType == BookingType.ShortStay && existing.BookingType == BookingType.Daily)
+            {
+                // Short-stay trying to book during an overnight reservation
+                // Check if short-stay falls within the overnight booking period
+                if (checkIn.Date >= existing.CheckInDate.Date && checkIn.Date < existing.CheckOutDate.Date)
+                {
+                    hasConflict = true;
+                    conflictReason = $"Room is booked overnight from {existing.CheckInDate:d} to {existing.CheckOutDate:d}";
+                }
+            }
+            else if (bookingType == BookingType.Daily && existing.BookingType == BookingType.ShortStay)
+            {
+                // Overnight booking trying to book when there's a short-stay
+                // Check if short-stay falls within the requested overnight period
+                if (existing.CheckInDate.Date >= checkIn.Date && existing.CheckInDate.Date < checkOut.Date)
+                {
+                    hasConflict = true;
+                    conflictReason = $"Room has a short-stay booking on {existing.CheckInDate:d} from {existing.CheckInDate:t} to {existing.CheckOutDate:t}";
+                }
+            }
+            else // Both overnight bookings
+            {
+                // For overnight bookings, allow same-day turnover with buffer time
+                var existingCheckOutWithBuffer = existing.CheckOutDate.AddHours(bufferHours);
+                var newCheckInWithBuffer = checkIn.AddHours(-bufferHours);
+
+                // Check if there's overlap considering buffer time
+                if (newCheckInWithBuffer < existing.CheckOutDate && checkOut > existing.CheckInDate)
+                {
+                    // Check if it's a same-day turnover (check-out day = check-in day)
+                    if (checkIn.Date == existing.CheckOutDate.Date)
+                    {
+                        // Allow if check-in time is after check-out time + buffer
+                        if (checkIn < existingCheckOutWithBuffer)
+                        {
+                            hasConflict = true;
+                            var earliestCheckIn = existingCheckOutWithBuffer;
+                            conflictReason = $"Room is occupied until {existing.CheckOutDate:g}. Earliest check-in: {earliestCheckIn:g} ({bufferHours}h cleaning buffer)";
+                        }
+                    }
+                    else if (checkIn < existing.CheckOutDate && checkOut > existing.CheckInDate)
+                    {
+                        // Regular date overlap (not same-day turnover)
+                        hasConflict = true;
+                        conflictReason = $"Overlaps with existing reservation from {existing.CheckInDate:d} to {existing.CheckOutDate:d}";
+                    }
+                }
+            }
+
+            if (hasConflict)
+            {
+                var guestName = existing.Guest != null ? $"{existing.Guest.FirstName} {existing.Guest.LastName}" : "Unknown";
+                return (false, $"{conflictReason}. Guest: {guestName}, Reservation #{existing.Id}");
+            }
+        }
+
+        return (true, string.Empty);
     }
 
     public async Task<IEnumerable<ReservationDto>> GetConflictingReservationsAsync(int roomId, DateTime checkIn, DateTime checkOut)
@@ -362,6 +475,78 @@ public class ReservationService : IReservationService
             .ToListAsync();
 
         return reservations.Select(MapToDto);
+    }
+
+    public async Task<IEnumerable<RoomDto>> GetAvailableRoomsAsync(
+        int hotelId, 
+        DateTime checkIn, 
+        DateTime checkOut, 
+        BookingType bookingType,
+        int? minCapacity = null, 
+        string? roomType = null)
+    {
+        // Get all rooms for the hotel that match the criteria
+        var roomsQuery = _context.Rooms
+            .Include(r => r.Hotel)
+            .Where(r => r.HotelId == hotelId && r.Status != RoomStatus.OutOfService);
+
+        // Filter by booking type compatibility
+        if (bookingType == BookingType.ShortStay)
+        {
+            roomsQuery = roomsQuery.Where(r => r.AllowsShortStay);
+        }
+
+        // Filter by capacity if specified
+        if (minCapacity.HasValue)
+        {
+            roomsQuery = roomsQuery.Where(r => r.Capacity >= minCapacity.Value);
+        }
+
+        // Filter by room type if specified
+        if (!string.IsNullOrEmpty(roomType))
+        {
+            // Convert string to RoomType enum
+            if (Enum.TryParse<RoomType>(roomType, true, out var roomTypeEnum))
+            {
+                roomsQuery = roomsQuery.Where(r => r.Type == roomTypeEnum);
+            }
+        }
+
+        var rooms = await roomsQuery.ToListAsync();
+
+        // Check availability for each room
+        var availableRooms = new List<RoomDto>();
+        
+        foreach (var room in rooms)
+        {
+            var (isAvailable, _) = await CheckAvailabilityWithDetailsAsync(room.Id, checkIn, checkOut, bookingType);
+            
+            if (isAvailable)
+            {
+                availableRooms.Add(new RoomDto
+                {
+                    Id = room.Id,
+                    HotelId = room.HotelId,
+                    HotelName = room.Hotel?.Name,
+                    RoomNumber = room.RoomNumber,
+                    Type = room.Type,
+                    Floor = room.Floor,
+                    Capacity = room.Capacity,
+                    PricePerNight = room.PricePerNight,
+                    ShortStayHourlyRate = room.ShortStayHourlyRate,
+                    AllowsShortStay = room.AllowsShortStay,
+                    MinimumShortStayHours = room.MinimumShortStayHours,
+                    MaximumShortStayHours = room.MaximumShortStayHours,
+                    Status = room.Status,
+                    Description = room.Description,
+                    Amenities = room.Amenities,
+                    CreatedAt = room.CreatedAt,
+                    UpdatedAt = room.UpdatedAt
+                });
+            }
+        }
+
+        return availableRooms.OrderBy(r => r.RoomNumber);
     }
 
     public async Task<ReservationDto> ConfirmReservationAsync(int id)

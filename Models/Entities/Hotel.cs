@@ -69,6 +69,10 @@ public class Hotel
     [MaxLength(100)]
     public string? CheckOutTime { get; set; } = "11:00"; // Default check-out time
     
+    // Cleaning Buffer Time
+    [Range(0, 24)]
+    public int BufferTimeHours { get; set; } = 3; // Hours needed between check-out and next check-in for cleaning
+    
     // Status
     public bool IsActive { get; set; } = true; // Can accept bookings
     
