@@ -3,6 +3,7 @@ using HotelManagement.Data;
 using HotelManagement.Infrastructure.Filters;
 using HotelManagement.Infrastructure.Middleware;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,17 +17,15 @@ builder.Services.AddControllersWithViews(options =>
 // Add all project-level dependencies (repositories, services, AutoMapper, DbContext, etc.)
 builder.Services.AddProjectServices(builder.Configuration);
 
-// Add CORS policy for frontend
+// Add CORS policy for frontend — origins read from config so they can be overridden via env vars
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? new[] { "http://localhost:3000" };
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.WithOrigins(
-                  "http://localhost:3000", 
-                  "http://localhost:3001",
-                  "http://192.168.100.6:3000",  // Your local network IP
-                  "http://127.0.0.1:3000"       // Alternative localhost
-              )
+        policy.WithOrigins(allowedOrigins)
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials();
@@ -71,12 +70,20 @@ using (var scope = app.Services.CreateScope())
     var services = scope.ServiceProvider;
     try
     {
+        // Auto-apply any pending EF Core migrations on startup
+        var context = services.GetRequiredService<ApplicationDbContext>();
+        await context.Database.MigrateAsync();
+
         var roleManager = services.GetRequiredService<RoleManager<IdentityRole>>();
         await DbSeeder.SeedRolesAsync(roleManager);
         
         // Create a default SuperAdmin user for testing
         var userManager = services.GetRequiredService<UserManager<HotelManagement.Models.Entities.ApplicationUser>>();
         await DbSeeder.SeedSuperAdminAsync(userManager);
+        
+        // Seed mock data for testing
+        var dbContext = services.GetRequiredService<ApplicationDbContext>();
+        await DbSeeder.SeedMockDataAsync(dbContext, userManager);
     }
     catch (Exception ex)
     {

@@ -31,7 +31,7 @@ namespace HotelManagement.Configurations
 
             // 2️⃣ Database (adjust connection string name as needed)
             services.AddDbContext<ApplicationDbContext>(options =>
-                options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
+                options.UseNpgsql(configuration.GetConnectionString("DefaultConnection")));
 
             // 3️⃣ Repositories
             services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
@@ -95,6 +95,7 @@ namespace HotelManagement.Configurations
 
             // 8️⃣ Business Services
             services.AddScoped<IHotelService, HotelService>();
+            services.AddScoped<IReportService, ReportService>();
 
             // 9️⃣ FluentValidation
             services.AddFluentValidationAutoValidation();

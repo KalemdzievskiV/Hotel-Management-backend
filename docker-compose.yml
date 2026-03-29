@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: hotel_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-HotelManagementDb}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hotel1234}
+    ports:
+      - "5432:5432"
+    volumes:
+      - hotel_postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hotel_backend
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=${POSTGRES_DB:-HotelManagementDb};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-hotel1234}
+      - JwtSettings__Secret=${JWT_SECRET:-YourSuperSecretKeyThatIsAtLeast32CharactersLongForHS256!}
+      - JwtSettings__Issuer=${JWT_ISSUER:-HotelManagementAPI}
+      - JwtSettings__Audience=${JWT_AUDIENCE:-HotelManagementClient}
+      - JwtSettings__ExpiryMinutes=${JWT_EXPIRY_MINUTES:-60}
+      - Cors__AllowedOrigins__0=${FRONTEND_URL:-http://localhost:3000}
+    ports:
+      - "${BACKEND_PORT:-5001}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../hotel-management-frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:5001/api}
+    container_name: hotel_frontend
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  hotel_postgres_data:

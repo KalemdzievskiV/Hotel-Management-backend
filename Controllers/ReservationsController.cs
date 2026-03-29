@@ -499,10 +499,14 @@ public class ReservationsController : ControllerBase
                 TotalRevenue = 0,
                 RoomRevenue = 0,
                 DepositRevenue = 0,
+                CompletedReservations = 0,
+                CancellationCount = 0,
                 RevenueByRoomType = new List<object>(),
                 RevenueByPaymentMethod = new List<object>(),
                 RevenueByBookingType = new List<object>(),
-                CancellationCount = 0,
+                AverageDailyRate = 0,
+                RevPAR = 0,
+                TotalRoomNights = 0,
                 PeriodStart = startDate ?? DateTime.UtcNow.AddMonths(-1),
                 PeriodEnd = endDate ?? DateTime.UtcNow
             });
