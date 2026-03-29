@@ -10,5 +10,8 @@ namespace HotelManagement.Services.Interfaces
         Task<IEnumerable<OccupancyReportDto>> GetOccupancyHistoryAsync(DateTime startDate, DateTime endDate);
         Task<IEnumerable<GuestVisitHistoryDto>> GetGuestVisitHistoryAsync();
         Task<IEnumerable<OutstandingPaymentDto>> GetOutstandingPaymentsAsync();
+        Task<IEnumerable<CancellationReportDto>> GetCancellationsAsync(DateTime startDate, DateTime endDate);
+        Task<IEnumerable<NoShowReportDto>> GetNoShowsAsync(DateTime startDate, DateTime endDate);
+        Task<IEnumerable<PaymentReconciliationDto>> GetPaymentReconciliationAsync(DateTime startDate, DateTime endDate);
     }
 }

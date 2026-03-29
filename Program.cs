@@ -5,6 +5,9 @@ using HotelManagement.Infrastructure.Middleware;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
+// Allow DateTime.Kind=Unspecified to be written to PostgreSQL timestamptz columns
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.

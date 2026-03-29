@@ -65,5 +65,32 @@ namespace HotelManagement.Controllers
             var result = await _reportService.GetOutstandingPaymentsAsync();
             return Ok(result);
         }
+
+        [HttpGet("payments/reconciliation")]
+        public async Task<ActionResult<IEnumerable<PaymentReconciliationDto>>> GetPaymentReconciliation([FromQuery] DateTime? startDate, [FromQuery] DateTime? endDate)
+        {
+            var start = startDate ?? DateTime.Today.AddDays(-30);
+            var end = endDate ?? DateTime.Today;
+            var result = await _reportService.GetPaymentReconciliationAsync(start, end);
+            return Ok(result);
+        }
+
+        [HttpGet("cancellations")]
+        public async Task<ActionResult<IEnumerable<CancellationReportDto>>> GetCancellations([FromQuery] DateTime? startDate, [FromQuery] DateTime? endDate)
+        {
+            var start = startDate ?? DateTime.Today.AddDays(-30);
+            var end = endDate ?? DateTime.Today;
+            var result = await _reportService.GetCancellationsAsync(start, end);
+            return Ok(result);
+        }
+
+        [HttpGet("noshows")]
+        public async Task<ActionResult<IEnumerable<NoShowReportDto>>> GetNoShows([FromQuery] DateTime? startDate, [FromQuery] DateTime? endDate)
+        {
+            var start = startDate ?? DateTime.Today.AddDays(-30);
+            var end = endDate ?? DateTime.Today;
+            var result = await _reportService.GetNoShowsAsync(start, end);
+            return Ok(result);
+        }
     }
 }

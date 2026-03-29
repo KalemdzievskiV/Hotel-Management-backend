@@ -148,5 +148,79 @@ namespace HotelManagement.Services.Implementations
 
             return outstandingPayments;
         }
+
+        public async Task<IEnumerable<CancellationReportDto>> GetCancellationsAsync(DateTime startDate, DateTime endDate)
+        {
+            var cancellations = await _context.Reservations
+                .Where(r => r.CancelledAt.HasValue &&
+                            r.CancelledAt.Value >= startDate &&
+                            r.CancelledAt.Value <= endDate &&
+                            r.Status == ReservationStatus.Cancelled)
+                .Select(r => new { r.CancelledAt, r.TotalAmount, r.CancellationReason })
+                .ToListAsync();
+
+            return cancellations
+                .GroupBy(r => r.CancelledAt!.Value.Date)
+                .Select(g => new CancellationReportDto
+                {
+                    Date = g.Key,
+                    CancellationCount = g.Count(),
+                    LostRevenue = g.Sum(r => r.TotalAmount),
+                    MostCommonReason = g
+                        .GroupBy(r => r.CancellationReason ?? "No reason")
+                        .OrderByDescending(gr => gr.Count())
+                        .Select(gr => gr.Key)
+                        .FirstOrDefault() ?? "N/A"
+                })
+                .OrderBy(c => c.Date);
+        }
+
+        public async Task<IEnumerable<NoShowReportDto>> GetNoShowsAsync(DateTime startDate, DateTime endDate)
+        {
+            return await _context.Reservations
+                .Include(r => r.Guest)
+                .Include(r => r.Room)
+                .Where(r => r.Status == ReservationStatus.NoShow &&
+                            r.CheckInDate >= startDate &&
+                            r.CheckInDate <= endDate)
+                .Select(r => new NoShowReportDto
+                {
+                    ReservationId = r.Id,
+                    GuestName = r.Guest.FirstName + " " + r.Guest.LastName,
+                    RoomNumber = r.Room.RoomNumber,
+                    CheckInDate = r.CheckInDate,
+                    TotalAmount = r.TotalAmount
+                })
+                .OrderByDescending(r => r.CheckInDate)
+                .ToListAsync();
+        }
+
+        public async Task<IEnumerable<PaymentReconciliationDto>> GetPaymentReconciliationAsync(DateTime startDate, DateTime endDate)
+        {
+            var payments = await _context.Reservations
+                .Where(r => r.UpdatedAt.HasValue &&
+                            r.UpdatedAt.Value >= startDate &&
+                            r.UpdatedAt.Value <= endDate &&
+                            r.PaymentStatus != PaymentStatus.Unpaid)
+                .Select(r => new { r.UpdatedAt, r.TotalAmount, r.PaymentMethod })
+                .ToListAsync();
+
+            return payments
+                .GroupBy(r => r.UpdatedAt!.Value.Date)
+                .Select(g => new PaymentReconciliationDto
+                {
+                    Date = g.Key,
+                    TotalTransactions = g.Count(),
+                    CashRevenue = g.Where(r => r.PaymentMethod == PaymentMethod.Cash).Sum(r => r.TotalAmount),
+                    CardRevenue = g.Where(r => r.PaymentMethod == PaymentMethod.CreditCard || r.PaymentMethod == PaymentMethod.DebitCard).Sum(r => r.TotalAmount),
+                    BankTransferRevenue = g.Where(r => r.PaymentMethod == PaymentMethod.BankTransfer).Sum(r => r.TotalAmount),
+                    OtherRevenue = g.Where(r => r.PaymentMethod != PaymentMethod.Cash &&
+                                                r.PaymentMethod != PaymentMethod.CreditCard &&
+                                                r.PaymentMethod != PaymentMethod.DebitCard &&
+                                                r.PaymentMethod != PaymentMethod.BankTransfer).Sum(r => r.TotalAmount),
+                    TotalRevenue = g.Sum(r => r.TotalAmount)
+                })
+                .OrderBy(r => r.Date);
+        }
     }
 }
