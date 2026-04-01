@@ -124,6 +124,9 @@ app.MapStaticAssets();
 // 3️⃣ Map API controllers
 app.MapControllers();
 
+// Health check endpoint for Railway
+app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
+
 app.Run();
 
 // Make the implicit Program class public for integration tests
