@@ -83,6 +83,22 @@ public class Reservation
     [MaxLength(100)]
     public string? PaymentReference { get; set; } // Transaction ID, reference number
     
+    // Discount (Walk-In Pricing Tools)
+    [Column(TypeName = "decimal(10,2)")]
+    [Range(0, 1000000)]
+    public decimal DiscountAmount { get; set; } = 0;
+
+    [MaxLength(200)]
+    public string? DiscountReason { get; set; }
+
+    // Extra Charges (Express Checkout - minibar, damages, etc.)
+    [Column(TypeName = "decimal(10,2)")]
+    [Range(0, 1000000)]
+    public decimal ExtraCharges { get; set; } = 0;
+
+    [MaxLength(500)]
+    public string? ExtraChargesNotes { get; set; }
+
     // Special Requests & Notes
     [MaxLength(1000)]
     public string? SpecialRequests { get; set; }

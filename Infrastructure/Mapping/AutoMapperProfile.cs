@@ -79,7 +79,11 @@ namespace HotelManagement.Infrastructure.Mapping
                 .ForMember(dest => dest.CheckedInAt, opt => opt.Ignore())
                 .ForMember(dest => dest.CheckedOutAt, opt => opt.Ignore())
                 .ForMember(dest => dest.CancelledAt, opt => opt.Ignore())
-                .ForMember(dest => dest.CancellationReason, opt => opt.Ignore());
+                .ForMember(dest => dest.CancellationReason, opt => opt.Ignore())
+                .ForMember(dest => dest.DiscountAmount, opt => opt.Ignore())
+                .ForMember(dest => dest.DiscountReason, opt => opt.Ignore())
+                .ForMember(dest => dest.ExtraCharges, opt => opt.Ignore())
+                .ForMember(dest => dest.ExtraChargesNotes, opt => opt.Ignore());
         }
     }
 }

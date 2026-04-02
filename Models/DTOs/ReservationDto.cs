@@ -71,6 +71,14 @@ public class ReservationDto
     [MaxLength(100, ErrorMessage = "Payment reference cannot exceed 100 characters")]
     public string? PaymentReference { get; set; }
     
+    // Discount
+    public decimal DiscountAmount { get; set; } = 0;
+    public string? DiscountReason { get; set; }
+
+    // Extra Charges
+    public decimal ExtraCharges { get; set; } = 0;
+    public string? ExtraChargesNotes { get; set; }
+
     // Special Requests & Notes
     [MaxLength(1000, ErrorMessage = "Special requests cannot exceed 1000 characters")]
     public string? SpecialRequests { get; set; }
