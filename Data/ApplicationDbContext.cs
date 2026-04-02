@@ -17,6 +17,9 @@ namespace HotelManagement.Data
         public DbSet<Room> Rooms { get; set; }
         public DbSet<Guest> Guests { get; set; }
         public DbSet<Reservation> Reservations { get; set; }
+        public DbSet<InventoryItem> InventoryItems { get; set; }
+        public DbSet<InventoryTransaction> InventoryTransactions { get; set; }
+        public DbSet<HousekeepingTask> HousekeepingTasks { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -84,6 +87,57 @@ namespace HotelManagement.Data
                 .HasForeignKey(r => r.CreatedByUserId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired(true);
+
+            // InventoryItem -> Hotel: CASCADE
+            modelBuilder.Entity<InventoryItem>()
+                .HasOne(i => i.Hotel)
+                .WithMany()
+                .HasForeignKey(i => i.HotelId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // InventoryTransaction -> InventoryItem: CASCADE
+            modelBuilder.Entity<InventoryTransaction>()
+                .HasOne(t => t.InventoryItem)
+                .WithMany(i => i.Transactions)
+                .HasForeignKey(t => t.InventoryItemId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // InventoryTransaction -> Room: SET NULL
+            modelBuilder.Entity<InventoryTransaction>()
+                .HasOne(t => t.Room)
+                .WithMany()
+                .HasForeignKey(t => t.RoomId)
+                .OnDelete(DeleteBehavior.SetNull)
+                .IsRequired(false);
+
+            // InventoryTransaction -> CreatedBy: RESTRICT
+            modelBuilder.Entity<InventoryTransaction>()
+                .HasOne(t => t.CreatedBy)
+                .WithMany()
+                .HasForeignKey(t => t.CreatedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // HousekeepingTask -> Room: CASCADE
+            modelBuilder.Entity<HousekeepingTask>()
+                .HasOne(h => h.Room)
+                .WithMany()
+                .HasForeignKey(h => h.RoomId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // HousekeepingTask -> AssignedTo: SET NULL
+            modelBuilder.Entity<HousekeepingTask>()
+                .HasOne(h => h.AssignedTo)
+                .WithMany()
+                .HasForeignKey(h => h.AssignedToUserId)
+                .OnDelete(DeleteBehavior.SetNull)
+                .IsRequired(false);
+
+            // HousekeepingTask -> CreatedBy: RESTRICT
+            modelBuilder.Entity<HousekeepingTask>()
+                .HasOne(h => h.CreatedBy)
+                .WithMany()
+                .HasForeignKey(h => h.CreatedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
 
             // ApplicationUser -> Hotel (staff assignment): RESTRICT (optional, nullable FK)
             modelBuilder.Entity<ApplicationUser>()

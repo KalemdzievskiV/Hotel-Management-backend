@@ -98,6 +98,8 @@ namespace HotelManagement.Configurations
             // 8️⃣ Business Services
             services.AddScoped<IHotelService, HotelService>();
             services.AddScoped<IReportService, ReportService>();
+            services.AddScoped<IInventoryService, InventoryService>();
+            services.AddScoped<IHousekeepingService, HousekeepingService>();
 
             // 9️⃣ FluentValidation
             services.AddFluentValidationAutoValidation();
