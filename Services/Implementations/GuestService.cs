@@ -91,9 +91,12 @@ public class GuestService : CrudService<Guest, GuestDto>, IGuestService
 
     public async Task<IEnumerable<GuestDto>> SearchByNameAsync(string searchTerm)
     {
+        var pattern = $"%{searchTerm}%";
         var guests = await _guestRepository.FindAsync(g =>
-            g.FirstName.Contains(searchTerm) ||
-            g.LastName.Contains(searchTerm));
+            EF.Functions.ILike(g.FirstName, pattern) ||
+            EF.Functions.ILike(g.LastName, pattern) ||
+            EF.Functions.ILike(g.Email, pattern) ||
+            EF.Functions.ILike(g.PhoneNumber, pattern));
 
         return _mapper.Map<IEnumerable<GuestDto>>(guests);
     }
