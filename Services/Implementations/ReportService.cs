@@ -2,24 +2,57 @@ using HotelManagement.Data;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Enums;
 using HotelManagement.Services.Interfaces;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using System.Globalization;
+using System.Security.Claims;
 
 namespace HotelManagement.Services.Implementations
 {
     public class ReportService : IReportService
     {
         private readonly ApplicationDbContext _context;
+        private readonly IHttpContextAccessor _httpContextAccessor;
 
-        public ReportService(ApplicationDbContext context)
+        public ReportService(ApplicationDbContext context, IHttpContextAccessor httpContextAccessor)
         {
             _context = context;
+            _httpContextAccessor = httpContextAccessor;
+        }
+
+        private string? GetCurrentUserId() =>
+            _httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        private bool IsSuperAdmin() =>
+            _httpContextAccessor.HttpContext?.User.IsInRole("SuperAdmin") ?? false;
+
+        /// <summary>
+        /// Returns hotel IDs accessible to the current user.
+        /// SuperAdmin sees all hotels; everyone else sees only hotels they own.
+        /// </summary>
+        private async Task<List<int>> GetAccessibleHotelIdsAsync()
+        {
+            if (IsSuperAdmin())
+                return await _context.Hotels.Select(h => h.Id).ToListAsync();
+
+            var userId = GetCurrentUserId();
+            if (string.IsNullOrEmpty(userId))
+                return new List<int>();
+
+            return await _context.Hotels
+                .Where(h => h.OwnerId == userId)
+                .Select(h => h.Id)
+                .ToListAsync();
         }
 
         public async Task<IEnumerable<DailyRevenueDto>> GetDailyRevenueAsync(DateTime startDate, DateTime endDate)
         {
+            var hotelIds = await GetAccessibleHotelIdsAsync();
+
             var reservations = await _context.Reservations
-                .Where(r => r.CheckInDate >= startDate && r.CheckInDate <= endDate && r.Status == ReservationStatus.CheckedOut)
+                .Where(r => hotelIds.Contains(r.HotelId) &&
+                            r.CheckInDate >= startDate && r.CheckInDate <= endDate &&
+                            r.Status == ReservationStatus.CheckedOut)
                 .GroupBy(r => r.CheckInDate.Date)
                 .Select(g => new DailyRevenueDto
                 {
@@ -35,10 +68,12 @@ namespace HotelManagement.Services.Implementations
 
         public async Task<IEnumerable<WeeklyRevenueDto>> GetWeeklyRevenueAsync(DateTime startDate, DateTime endDate)
         {
-            // Note: EF Core might not translate complex date grouping well, so we fetch relevant data first
-            // For larger datasets, a stored procedure or raw SQL would be better
+            var hotelIds = await GetAccessibleHotelIdsAsync();
+
             var reservations = await _context.Reservations
-                .Where(r => r.CheckInDate >= startDate && r.CheckInDate <= endDate && r.Status == ReservationStatus.CheckedOut)
+                .Where(r => hotelIds.Contains(r.HotelId) &&
+                            r.CheckInDate >= startDate && r.CheckInDate <= endDate &&
+                            r.Status == ReservationStatus.CheckedOut)
                 .Select(r => new { r.CheckInDate, r.TotalAmount })
                 .ToListAsync();
 
@@ -61,8 +96,12 @@ namespace HotelManagement.Services.Implementations
 
         public async Task<IEnumerable<MonthlyRevenueDto>> GetMonthlyRevenueAsync(int year)
         {
+            var hotelIds = await GetAccessibleHotelIdsAsync();
+
             var reservations = await _context.Reservations
-                .Where(r => r.CheckInDate.Year == year && r.Status == ReservationStatus.CheckedOut)
+                .Where(r => hotelIds.Contains(r.HotelId) &&
+                            r.CheckInDate.Year == year &&
+                            r.Status == ReservationStatus.CheckedOut)
                 .GroupBy(r => r.CheckInDate.Month)
                 .Select(g => new MonthlyRevenueDto
                 {
@@ -78,13 +117,13 @@ namespace HotelManagement.Services.Implementations
 
         public async Task<IEnumerable<OccupancyReportDto>> GetOccupancyHistoryAsync(DateTime startDate, DateTime endDate)
         {
-            var totalRooms = await _context.Rooms.CountAsync();
-            
-            // This is a simplified occupancy calculation based on check-ins
-            // A more accurate one would check date ranges overlap
+            var hotelIds = await GetAccessibleHotelIdsAsync();
+            var totalRooms = await _context.Rooms.CountAsync(r => hotelIds.Contains(r.HotelId));
+
             var occupancy = await _context.Reservations
-                .Where(r => r.CheckInDate >= startDate && r.CheckInDate <= endDate && 
-                           (r.Status == ReservationStatus.CheckedIn || 
+                .Where(r => hotelIds.Contains(r.HotelId) &&
+                            r.CheckInDate >= startDate && r.CheckInDate <= endDate &&
+                           (r.Status == ReservationStatus.CheckedIn ||
                             r.Status == ReservationStatus.CheckedOut))
                 .GroupBy(r => r.CheckInDate.Date)
                 .Select(g => new OccupancyReportDto
@@ -102,22 +141,27 @@ namespace HotelManagement.Services.Implementations
 
         public async Task<IEnumerable<GuestVisitHistoryDto>> GetGuestVisitHistoryAsync()
         {
+            var hotelIds = await GetAccessibleHotelIdsAsync();
+
             var guestHistory = await _context.Guests
+                .Where(g => g.HotelId.HasValue && hotelIds.Contains(g.HotelId.Value) ||
+                            g.Reservations.Any(r => hotelIds.Contains(r.HotelId)))
                 .Select(g => new GuestVisitHistoryDto
                 {
                     GuestId = g.Id,
                     GuestName = g.FirstName + " " + g.LastName,
-                    VisitCount = g.Reservations.Count(r => r.Status == ReservationStatus.CheckedOut),
+                    VisitCount = g.Reservations.Count(r => hotelIds.Contains(r.HotelId) && r.Status == ReservationStatus.CheckedOut),
                     TotalSpent = g.Reservations
-                        .Where(r => r.Status == ReservationStatus.CheckedOut)
+                        .Where(r => hotelIds.Contains(r.HotelId) && r.Status == ReservationStatus.CheckedOut)
                         .Sum(r => r.TotalAmount),
                     LastVisit = g.Reservations
+                        .Where(r => hotelIds.Contains(r.HotelId))
                         .OrderByDescending(r => r.CheckOutDate)
                         .Select(r => r.CheckOutDate)
                         .FirstOrDefault()
                 })
                 .OrderByDescending(g => g.TotalSpent)
-                .Take(50) // Top 50 guests
+                .Take(50)
                 .ToListAsync();
 
             return guestHistory;
@@ -125,11 +169,14 @@ namespace HotelManagement.Services.Implementations
 
         public async Task<IEnumerable<OutstandingPaymentDto>> GetOutstandingPaymentsAsync()
         {
+            var hotelIds = await GetAccessibleHotelIdsAsync();
+
             var outstandingPayments = await _context.Reservations
                 .Include(r => r.Guest)
                 .Include(r => r.Room)
-                .Where(r => r.RemainingAmount > 0 && 
-                            r.Status != ReservationStatus.Cancelled && 
+                .Where(r => hotelIds.Contains(r.HotelId) &&
+                            r.RemainingAmount > 0 &&
+                            r.Status != ReservationStatus.Cancelled &&
                             r.Status != ReservationStatus.NoShow)
                 .Select(r => new OutstandingPaymentDto
                 {
@@ -139,7 +186,7 @@ namespace HotelManagement.Services.Implementations
                     CheckInDate = r.CheckInDate,
                     CheckOutDate = r.CheckOutDate,
                     TotalAmount = r.TotalAmount,
-                    PaidAmount = r.DepositAmount, // Assuming DepositAmount tracks what has been paid so far
+                    PaidAmount = r.DepositAmount,
                     RemainingAmount = r.RemainingAmount,
                     Status = r.Status.ToString()
                 })
@@ -151,8 +198,11 @@ namespace HotelManagement.Services.Implementations
 
         public async Task<IEnumerable<CancellationReportDto>> GetCancellationsAsync(DateTime startDate, DateTime endDate)
         {
+            var hotelIds = await GetAccessibleHotelIdsAsync();
+
             var cancellations = await _context.Reservations
-                .Where(r => r.CancelledAt.HasValue &&
+                .Where(r => hotelIds.Contains(r.HotelId) &&
+                            r.CancelledAt.HasValue &&
                             r.CancelledAt.Value >= startDate &&
                             r.CancelledAt.Value <= endDate &&
                             r.Status == ReservationStatus.Cancelled)
@@ -177,10 +227,13 @@ namespace HotelManagement.Services.Implementations
 
         public async Task<IEnumerable<NoShowReportDto>> GetNoShowsAsync(DateTime startDate, DateTime endDate)
         {
+            var hotelIds = await GetAccessibleHotelIdsAsync();
+
             return await _context.Reservations
                 .Include(r => r.Guest)
                 .Include(r => r.Room)
-                .Where(r => r.Status == ReservationStatus.NoShow &&
+                .Where(r => hotelIds.Contains(r.HotelId) &&
+                            r.Status == ReservationStatus.NoShow &&
                             r.CheckInDate >= startDate &&
                             r.CheckInDate <= endDate)
                 .Select(r => new NoShowReportDto
@@ -197,8 +250,11 @@ namespace HotelManagement.Services.Implementations
 
         public async Task<IEnumerable<PaymentReconciliationDto>> GetPaymentReconciliationAsync(DateTime startDate, DateTime endDate)
         {
+            var hotelIds = await GetAccessibleHotelIdsAsync();
+
             var payments = await _context.Reservations
-                .Where(r => r.UpdatedAt.HasValue &&
+                .Where(r => hotelIds.Contains(r.HotelId) &&
+                            r.UpdatedAt.HasValue &&
                             r.UpdatedAt.Value >= startDate &&
                             r.UpdatedAt.Value <= endDate &&
                             r.PaymentStatus != PaymentStatus.Unpaid)

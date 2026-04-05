@@ -261,9 +261,16 @@ public class ReservationService : IReservationService
         if (reservation == null)
             throw new KeyNotFoundException($"Reservation with ID {id} not found");
 
-        // Only allow deletion for pending reservations
-        if (reservation.Status != ReservationStatus.Pending)
-            throw new InvalidOperationException("Only pending reservations can be deleted. Use cancellation for confirmed reservations.");
+        // If the room is currently occupied by this reservation, free it up
+        if (reservation.Status == ReservationStatus.CheckedIn)
+        {
+            var room = await _context.Rooms.FindAsync(reservation.RoomId);
+            if (room != null)
+            {
+                room.Status = RoomStatus.Available;
+                _context.Rooms.Update(room);
+            }
+        }
 
         _context.Reservations.Remove(reservation);
         await _context.SaveChangesAsync();
@@ -579,9 +586,6 @@ public class ReservationService : IReservationService
 
         if (reservation.Status != ReservationStatus.Confirmed)
             throw new InvalidOperationException($"Only confirmed reservations can be checked in");
-
-        if (DateTime.UtcNow.Date < reservation.CheckInDate.Date)
-            throw new InvalidOperationException($"Cannot check in before check-in date");
 
         reservation.Status = ReservationStatus.CheckedIn;
         reservation.CheckedInAt = DateTime.UtcNow;

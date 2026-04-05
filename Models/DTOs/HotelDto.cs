@@ -39,11 +39,9 @@ public class HotelDto
     [MaxLength(20, ErrorMessage = "Phone number cannot exceed 20 characters")]
     public string? PhoneNumber { get; set; }
     
-    [EmailAddress(ErrorMessage = "Invalid email format")]
     [MaxLength(256, ErrorMessage = "Email cannot exceed 256 characters")]
     public string? Email { get; set; }
-    
-    [Url(ErrorMessage = "Invalid URL format")]
+
     [MaxLength(500, ErrorMessage = "Website URL cannot exceed 500 characters")]
     public string? Website { get; set; }
     
