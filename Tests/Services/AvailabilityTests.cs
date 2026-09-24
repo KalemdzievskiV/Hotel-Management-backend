@@ -1,5 +1,6 @@
 using AutoMapper;
 using HotelManagement.Data;
+using HotelManagement.Infrastructure.Mapping;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Models.Enums;
@@ -18,7 +19,6 @@ namespace HotelManagement.Tests.Services;
 public class AvailabilityTests
 {
     private readonly ApplicationDbContext _context;
-    private readonly Mock<IMapper> _mapperMock;
     private readonly Mock<IHttpContextAccessor> _httpContextAccessorMock;
     private readonly ReservationService _service;
 
@@ -29,7 +29,6 @@ public class AvailabilityTests
             .Options;
 
         _context = new ApplicationDbContext(options);
-        _mapperMock = new Mock<IMapper>();
         _httpContextAccessorMock = new Mock<IHttpContextAccessor>();
 
         var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
@@ -39,7 +38,7 @@ public class AvailabilityTests
         var httpContext = new DefaultHttpContext { User = user };
         _httpContextAccessorMock.Setup(x => x.HttpContext).Returns(httpContext);
 
-        _service = new ReservationService(_context, _mapperMock.Object, _httpContextAccessorMock.Object);
+        _service = new ReservationService(_context, new MapperConfiguration(cfg => cfg.AddProfile<AutoMapperProfile>()).CreateMapper(), _httpContextAccessorMock.Object);
     }
 
     private async Task SeedTestData()
@@ -119,7 +118,7 @@ public class AvailabilityTests
         _context.Reservations.Add(existingReservation);
         await _context.SaveChangesAsync();
 
-        // Try to book at 12 PM (only 1 hour after check-out, needs 3 hours buffer)
+        // Try to check in at 12 PM for one night (only 1 hour after check-out, needs 3 hours buffer)
         var createDto = new CreateReservationDto
         {
             HotelId = 1,
@@ -127,7 +126,7 @@ public class AvailabilityTests
             GuestId = 1,
             BookingType = BookingType.Daily,
             CheckInDate = baseDate.AddHours(12),
-            CheckOutDate = baseDate.AddHours(15),
+            CheckOutDate = baseDate.AddDays(1).AddHours(11),
             NumberOfGuests = 2
         };
 

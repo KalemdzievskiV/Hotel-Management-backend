@@ -10,14 +10,18 @@ using System.Security.Claims;
 
 namespace HotelManagement.Services.Implementations;
 
+/// <summary>
+/// Reservation lifecycle, availability and money.
+///
+/// Money rules: TotalAmount = room price - DiscountAmount + ExtraCharges. Every payment and
+/// refund is a row in the Payments ledger; DepositAmount is the net amount paid so far and
+/// is only ever changed by recording a payment or refund.
+/// </summary>
 public class ReservationService : IReservationService
 {
     private readonly ApplicationDbContext _context;
     private readonly IMapper _mapper;
     private readonly IHttpContextAccessor _httpContextAccessor;
-    
-    // Buffer time in hours between check-out and next check-in for cleaning
-    private const int DEFAULT_BUFFER_HOURS = 3;
 
     public ReservationService(
         ApplicationDbContext context,
@@ -35,124 +39,347 @@ public class ReservationService : IReservationService
             ?? throw new UnauthorizedAccessException("User not authenticated");
     }
 
-    public async Task<ReservationDto> CreateReservationAsync(CreateReservationDto createDto)
+    private string? TryGetCurrentUserId() =>
+        _httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+    #region Transactions
+
+    /// <summary>
+    /// Runs the action in a database transaction, joining an outer one if present.
+    /// The in-memory test provider has no transactions, so it runs the action directly.
+    /// </summary>
+    private async Task<T> InTransactionAsync<T>(Func<Task<T>> action)
     {
-        // Validate hotel exists
-        var hotel = await _context.Hotels.FindAsync(createDto.HotelId);
-        if (hotel == null)
-            throw new KeyNotFoundException($"Hotel with ID {createDto.HotelId} not found");
+        if (!_context.Database.IsRelational() || _context.Database.CurrentTransaction != null)
+            return await action();
 
-        // Validate room exists and belongs to hotel
-        var room = await _context.Rooms
-            .Include(r => r.Hotel)
-            .FirstOrDefaultAsync(r => r.Id == createDto.RoomId);
-        
-        if (room == null)
-            throw new KeyNotFoundException($"Room with ID {createDto.RoomId} not found");
-        
-        if (room.HotelId != createDto.HotelId)
-            throw new InvalidOperationException($"Room {createDto.RoomId} does not belong to hotel {createDto.HotelId}");
-
-        // Validate guest exists
-        var guest = await _context.Guests.FindAsync(createDto.GuestId);
-        if (guest == null)
-            throw new KeyNotFoundException($"Guest with ID {createDto.GuestId} not found");
-
-        // Validate booking type and room compatibility
-        if (createDto.BookingType == BookingType.ShortStay && !room.AllowsShortStay)
-            throw new InvalidOperationException($"Room {room.RoomNumber} does not support short-stay bookings");
-
-        // Validate dates based on booking type
-        if (createDto.BookingType == BookingType.ShortStay)
-        {
-            // For short stays, allow same-day bookings but check-out must be after check-in (time-wise)
-            if (createDto.CheckOutDate <= createDto.CheckInDate)
-                throw new InvalidOperationException("Check-out time must be after check-in time");
-        }
-        else
-        {
-            // For overnight stays, check-out must be on a later date
-            if (createDto.CheckOutDate.Date <= createDto.CheckInDate.Date)
-                throw new InvalidOperationException("Check-out date must be after check-in date for overnight stays");
-        }
-
-        // Validate short-stay duration
-        if (createDto.BookingType == BookingType.ShortStay)
-        {
-            var hours = (int)Math.Ceiling((createDto.CheckOutDate - createDto.CheckInDate).TotalHours);
-            
-            if (room.MinimumShortStayHours.HasValue && hours < room.MinimumShortStayHours.Value)
-                throw new InvalidOperationException($"Minimum stay for this room is {room.MinimumShortStayHours} hours");
-            
-            if (room.MaximumShortStayHours.HasValue && hours > room.MaximumShortStayHours.Value)
-                throw new InvalidOperationException($"Maximum stay for this room is {room.MaximumShortStayHours} hours");
-            
-            createDto.DurationInHours = hours;
-        }
-
-        // Check room availability with detailed conflict info
-        var (isAvailable, conflictInfo) = await CheckAvailabilityWithDetailsAsync(createDto.RoomId, createDto.CheckInDate, createDto.CheckOutDate, createDto.BookingType);
-        if (!isAvailable)
-            throw new InvalidOperationException($"Room {room.RoomNumber} is not available for the selected dates. {conflictInfo}");
-
-        // Validate number of guests against room capacity
-        if (createDto.NumberOfGuests > room.Capacity)
-            throw new InvalidOperationException($"Room capacity is {room.Capacity} guests, but {createDto.NumberOfGuests} guests requested");
-
-        // Calculate total amount
-        decimal totalAmount = CalculatePrice(room, createDto.CheckInDate, createDto.CheckOutDate, createDto.BookingType);
-
-        // Create reservation
-        var reservation = new Reservation
-        {
-            HotelId = createDto.HotelId,
-            RoomId = createDto.RoomId,
-            GuestId = createDto.GuestId,
-            CreatedByUserId = GetCurrentUserId(),
-            BookingType = createDto.BookingType,
-            CheckInDate = createDto.CheckInDate,
-            CheckOutDate = createDto.CheckOutDate,
-            DurationInHours = createDto.DurationInHours,
-            NumberOfGuests = createDto.NumberOfGuests,
-            Status = ReservationStatus.Pending,
-            TotalAmount = totalAmount,
-            DepositAmount = createDto.DepositAmount,
-            RemainingAmount = totalAmount - createDto.DepositAmount,
-            PaymentStatus = createDto.DepositAmount > 0 ? PaymentStatus.PartiallyPaid : PaymentStatus.Unpaid,
-            PaymentMethod = createDto.PaymentMethod,
-            PaymentReference = createDto.PaymentReference,
-            SpecialRequests = createDto.SpecialRequests,
-            Notes = createDto.Notes,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        _context.Reservations.Add(reservation);
-        await _context.SaveChangesAsync();
-
-        return await GetReservationByIdAsync(reservation.Id)
-            ?? throw new InvalidOperationException("Failed to retrieve created reservation");
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        var result = await action();
+        await transaction.CommitAsync();
+        return result;
     }
 
-    private decimal CalculatePrice(Room room, DateTime checkIn, DateTime checkOut, BookingType bookingType)
+    /// <summary>
+    /// Locks the room row until the transaction ends, so two concurrent bookings of the same
+    /// room can't both pass the availability check.
+    /// </summary>
+    private async Task LockRoomAsync(int roomId)
+    {
+        if (_context.Database.IsRelational())
+            await _context.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"Rooms\" WHERE \"Id\" = {roomId} FOR UPDATE");
+    }
+
+    #endregion
+
+    #region Create / Update / Delete
+
+    public Task<ReservationDto> CreateReservationAsync(CreateReservationDto createDto) =>
+        InTransactionAsync(async () =>
+        {
+            var hotel = await _context.Hotels.FindAsync(createDto.HotelId)
+                ?? throw new KeyNotFoundException($"Hotel with ID {createDto.HotelId} not found");
+            if (!hotel.IsActive)
+                throw new InvalidOperationException($"{hotel.Name} is not accepting bookings");
+
+            await LockRoomAsync(createDto.RoomId);
+            var room = await _context.Rooms.FirstOrDefaultAsync(r => r.Id == createDto.RoomId)
+                ?? throw new KeyNotFoundException($"Room with ID {createDto.RoomId} not found");
+            if (room.HotelId != createDto.HotelId)
+                throw new InvalidOperationException($"Room {createDto.RoomId} does not belong to hotel {createDto.HotelId}");
+            if (!room.IsActive || room.Status == RoomStatus.OutOfService)
+                throw new InvalidOperationException($"Room {room.RoomNumber} is not available for booking");
+
+            var guest = await _context.Guests.FindAsync(createDto.GuestId)
+                ?? throw new KeyNotFoundException($"Guest with ID {createDto.GuestId} not found");
+            if (guest.IsBlacklisted)
+                throw new InvalidOperationException($"{guest.FirstName} {guest.LastName} is blacklisted and cannot be booked");
+
+            var durationInHours = ValidateStay(room, createDto.CheckInDate, createDto.CheckOutDate, createDto.BookingType, createDto.NumberOfGuests);
+            await EnsureAvailableAsync(room, hotel, createDto.CheckInDate, createDto.CheckOutDate, createDto.BookingType);
+
+            var totalAmount = CalculateRoomPrice(room, createDto.CheckInDate, createDto.CheckOutDate, createDto.BookingType);
+            if (createDto.DepositAmount > totalAmount)
+                throw new InvalidOperationException($"Deposit ({createDto.DepositAmount:0.00}) cannot exceed the total ({totalAmount:0.00})");
+
+            var reservation = new Reservation
+            {
+                HotelId = createDto.HotelId,
+                RoomId = createDto.RoomId,
+                GuestId = createDto.GuestId,
+                CreatedByUserId = GetCurrentUserId(),
+                BookingType = createDto.BookingType,
+                CheckInDate = createDto.CheckInDate,
+                CheckOutDate = createDto.CheckOutDate,
+                DurationInHours = durationInHours,
+                NumberOfGuests = createDto.NumberOfGuests,
+                Status = ReservationStatus.Pending,
+                TotalAmount = totalAmount,
+                PaymentMethod = createDto.PaymentMethod,
+                PaymentReference = createDto.PaymentReference,
+                SpecialRequests = createDto.SpecialRequests,
+                Notes = createDto.Notes,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            if (createDto.DepositAmount > 0)
+            {
+                reservation.Payments.Add(new Payment
+                {
+                    Type = PaymentTransactionType.Payment,
+                    Amount = createDto.DepositAmount,
+                    Method = createDto.PaymentMethod,
+                    Reference = createDto.PaymentReference,
+                    Notes = "Deposit at booking",
+                    CreatedByUserId = reservation.CreatedByUserId
+                });
+            }
+
+            RecalculateBalance(reservation);
+            _context.Reservations.Add(reservation);
+            await _context.SaveChangesAsync();
+
+            return await GetReservationByIdAsync(reservation.Id)
+                ?? throw new InvalidOperationException("Failed to retrieve created reservation");
+        });
+
+    public Task<ReservationDto> UpdateReservationAsync(int id, UpdateReservationDto updateDto) =>
+        InTransactionAsync(async () =>
+        {
+            var reservation = await _context.Reservations
+                .Include(r => r.Room)
+                .Include(r => r.Hotel)
+                .Include(r => r.Payments)
+                .FirstOrDefaultAsync(r => r.Id == id)
+                ?? throw new KeyNotFoundException($"Reservation with ID {id} not found");
+
+            // Finished reservations are history: only administrative fields can change
+            if (!IsOpen(reservation.Status))
+            {
+                reservation.Notes = updateDto.Notes;
+                reservation.SpecialRequests = updateDto.SpecialRequests;
+                reservation.PaymentReference = updateDto.PaymentReference;
+                reservation.UpdatedAt = DateTime.UtcNow;
+
+                await _context.SaveChangesAsync();
+                return MapToDto(reservation);
+            }
+
+            if (reservation.Status == ReservationStatus.CheckedIn && updateDto.CheckInDate != reservation.CheckInDate)
+                throw new InvalidOperationException("The guest has already checked in; only the check-out can be changed");
+
+            var datesChanged = reservation.CheckInDate != updateDto.CheckInDate || reservation.CheckOutDate != updateDto.CheckOutDate;
+            if (datesChanged)
+                await LockRoomAsync(reservation.RoomId);
+
+            var durationInHours = ValidateStay(reservation.Room, updateDto.CheckInDate, updateDto.CheckOutDate, reservation.BookingType, updateDto.NumberOfGuests);
+
+            if (datesChanged)
+            {
+                await EnsureAvailableAsync(reservation.Room, reservation.Hotel, updateDto.CheckInDate, updateDto.CheckOutDate, reservation.BookingType, reservation.Id);
+                var roomPrice = CalculateRoomPrice(reservation.Room, updateDto.CheckInDate, updateDto.CheckOutDate, reservation.BookingType);
+                reservation.TotalAmount = Math.Max(0, roomPrice - reservation.DiscountAmount) + reservation.ExtraCharges;
+            }
+
+            reservation.CheckInDate = updateDto.CheckInDate;
+            reservation.CheckOutDate = updateDto.CheckOutDate;
+            reservation.DurationInHours = durationInHours;
+            reservation.NumberOfGuests = updateDto.NumberOfGuests;
+            reservation.PaymentMethod = updateDto.PaymentMethod;
+            reservation.PaymentReference = updateDto.PaymentReference;
+            reservation.SpecialRequests = updateDto.SpecialRequests;
+            reservation.Notes = updateDto.Notes;
+            reservation.UpdatedAt = DateTime.UtcNow;
+
+            RecalculateBalance(reservation);
+            await _context.SaveChangesAsync();
+
+            return await GetReservationByIdAsync(id)
+                ?? throw new InvalidOperationException("Failed to retrieve updated reservation");
+        });
+
+    /// <summary>
+    /// Only pending reservations with no money recorded can be deleted; anything else is
+    /// history and should be cancelled instead.
+    /// </summary>
+    public async Task DeleteReservationAsync(int id)
+    {
+        var reservation = await _context.Reservations
+            .Include(r => r.Payments)
+            .FirstOrDefaultAsync(r => r.Id == id)
+            ?? throw new KeyNotFoundException($"Reservation with ID {id} not found");
+
+        if (reservation.Status != ReservationStatus.Pending)
+            throw new InvalidOperationException("Only pending reservations can be deleted; cancel this reservation instead");
+
+        if (reservation.Payments.Count > 0)
+            throw new InvalidOperationException("This reservation has payments recorded; cancel it and refund instead of deleting");
+
+        _context.Reservations.Remove(reservation);
+        await _context.SaveChangesAsync();
+    }
+
+    #endregion
+
+    #region Validation, pricing and availability
+
+    private static bool IsOpen(ReservationStatus status) =>
+        status is ReservationStatus.Pending or ReservationStatus.Confirmed or ReservationStatus.CheckedIn;
+
+    /// <summary>
+    /// Validates dates, duration and capacity for a stay; returns the short-stay duration in hours
+    /// </summary>
+    private static int? ValidateStay(Room room, DateTime checkIn, DateTime checkOut, BookingType bookingType, int numberOfGuests)
+    {
+        if (numberOfGuests > room.Capacity)
+            throw new InvalidOperationException($"Room capacity is {room.Capacity} guests, but {numberOfGuests} guests requested");
+
+        if (bookingType == BookingType.Daily)
+        {
+            if (checkOut.Date <= checkIn.Date)
+                throw new InvalidOperationException("Check-out date must be after check-in date for overnight stays");
+            return null;
+        }
+
+        if (!room.AllowsShortStay)
+            throw new InvalidOperationException($"Room {room.RoomNumber} does not support short-stay bookings");
+
+        if (checkOut <= checkIn)
+            throw new InvalidOperationException("Check-out time must be after check-in time");
+
+        var hours = (int)Math.Ceiling((checkOut - checkIn).TotalHours);
+
+        if (room.MinimumShortStayHours.HasValue && hours < room.MinimumShortStayHours.Value)
+            throw new InvalidOperationException($"Minimum stay for this room is {room.MinimumShortStayHours} hours");
+
+        if (room.MaximumShortStayHours.HasValue && hours > room.MaximumShortStayHours.Value)
+            throw new InvalidOperationException($"Maximum stay for this room is {room.MaximumShortStayHours} hours");
+
+        return hours;
+    }
+
+    private static decimal CalculateRoomPrice(Room room, DateTime checkIn, DateTime checkOut, BookingType bookingType)
     {
         if (bookingType == BookingType.ShortStay)
         {
             var hours = (int)Math.Ceiling((checkOut - checkIn).TotalHours);
             return hours * (room.ShortStayHourlyRate ?? 0);
         }
-        else
-        {
-            var nights = Math.Max(1, (checkOut.Date - checkIn.Date).Days);
-            return nights * room.PricePerNight;
-        }
+
+        var nights = Math.Max(1, (checkOut.Date - checkIn.Date).Days);
+        return nights * room.PricePerNight;
     }
 
-    public async Task<ReservationDto?> GetReservationByIdAsync(int id)
+    /// <summary>
+    /// Keeps DepositAmount (net paid), RemainingAmount and PaymentStatus consistent with
+    /// the payments ledger, the total and the reservation status. Requires Payments loaded.
+    /// </summary>
+    private static void RecalculateBalance(Reservation reservation)
     {
-        var reservation = await QueryWithDetails().FirstOrDefaultAsync(r => r.Id == id);
+        var paid = reservation.Payments.Sum(p => p.Type == PaymentTransactionType.Payment ? p.Amount : -p.Amount);
+        var hasRefunds = reservation.Payments.Any(p => p.Type == PaymentTransactionType.Refund);
 
-        return reservation == null ? null : MapToDto(reservation);
+        reservation.DepositAmount = paid;
+        reservation.RemainingAmount = Math.Max(0, reservation.TotalAmount - paid);
+
+        if (reservation.Status == ReservationStatus.Cancelled)
+            reservation.PaymentStatus = paid > 0 ? PaymentStatus.Refunding
+                : hasRefunds ? PaymentStatus.Refunded
+                : PaymentStatus.Unpaid;
+        else if (paid <= 0)
+            reservation.PaymentStatus = hasRefunds ? PaymentStatus.Refunded : PaymentStatus.Unpaid;
+        else if (paid >= reservation.TotalAmount)
+            reservation.PaymentStatus = PaymentStatus.Paid;
+        else
+            reservation.PaymentStatus = PaymentStatus.PartiallyPaid;
     }
+
+    /// <summary>
+    /// Active reservations of a room that could touch the given window. The two-day margin
+    /// covers hotel check-in/out times and cleaning buffers added on top of stored dates.
+    /// </summary>
+    private Task<List<Reservation>> GetBlockingReservationsAsync(IReadOnlyCollection<int> roomIds, DateTime checkIn, DateTime checkOut, int? excludeReservationId = null)
+    {
+        var from = checkIn.AddDays(-2);
+        var to = checkOut.AddDays(2);
+
+        return _context.Reservations
+            .Include(r => r.Guest)
+            .Where(r => roomIds.Contains(r.RoomId)
+                && r.Status != ReservationStatus.Cancelled
+                && r.Status != ReservationStatus.CheckedOut
+                && r.Status != ReservationStatus.NoShow
+                && (excludeReservationId == null || r.Id != excludeReservationId)
+                && r.CheckInDate < to && r.CheckOutDate > from)
+            .ToListAsync();
+    }
+
+    private async Task EnsureAvailableAsync(Room room, Hotel? hotel, DateTime checkIn, DateTime checkOut, BookingType bookingType, int? excludeReservationId = null)
+    {
+        hotel ??= await _context.Hotels.FindAsync(room.HotelId);
+        var existing = await GetBlockingReservationsAsync(new[] { room.Id }, checkIn, checkOut, excludeReservationId);
+
+        var conflict = StayAvailability.FindConflict(checkIn, checkOut, bookingType, hotel, existing);
+        if (conflict != null)
+            throw new InvalidOperationException($"Room {room.RoomNumber} is not available for the selected dates. {conflict}");
+    }
+
+    public async Task<bool> IsRoomAvailableAsync(int roomId, DateTime checkIn, DateTime checkOut, int? excludeReservationId = null)
+    {
+        var room = await _context.Rooms.Include(r => r.Hotel).FirstOrDefaultAsync(r => r.Id == roomId);
+        if (room == null)
+            return false;
+
+        var existing = await GetBlockingReservationsAsync(new[] { roomId }, checkIn, checkOut, excludeReservationId);
+        return StayAvailability.FindConflict(checkIn, checkOut, BookingType.Daily, room.Hotel, existing) == null;
+    }
+
+    public async Task<IEnumerable<RoomDto>> GetAvailableRoomsAsync(
+        int hotelId,
+        DateTime checkIn,
+        DateTime checkOut,
+        BookingType bookingType,
+        int? minCapacity = null,
+        string? roomType = null)
+    {
+        var roomsQuery = _context.Rooms
+            .Include(r => r.Hotel)
+            .Where(r => r.HotelId == hotelId && r.IsActive && r.Status != RoomStatus.OutOfService);
+
+        if (bookingType == BookingType.ShortStay)
+            roomsQuery = roomsQuery.Where(r => r.AllowsShortStay);
+
+        if (minCapacity.HasValue)
+            roomsQuery = roomsQuery.Where(r => r.Capacity >= minCapacity.Value);
+
+        if (!string.IsNullOrEmpty(roomType) && Enum.TryParse<RoomType>(roomType, true, out var roomTypeEnum))
+            roomsQuery = roomsQuery.Where(r => r.Type == roomTypeEnum);
+
+        var rooms = await roomsQuery.ToListAsync();
+        if (rooms.Count == 0)
+            return Enumerable.Empty<RoomDto>();
+
+        // One query for all candidate rooms instead of one per room
+        var reservationsByRoom = (await GetBlockingReservationsAsync(rooms.Select(r => r.Id).ToList(), checkIn, checkOut))
+            .ToLookup(r => r.RoomId);
+
+        return rooms
+            .Where(room => StayAvailability.FindConflict(checkIn, checkOut, bookingType, room.Hotel, reservationsByRoom[room.Id]) == null)
+            .OrderBy(r => r.RoomNumber)
+            .Select(r => _mapper.Map<RoomDto>(r))
+            .ToList();
+    }
+
+    public Task<IEnumerable<ReservationDto>> GetConflictingReservationsAsync(int roomId, DateTime checkIn, DateTime checkOut) =>
+        ToDtosAsync(QueryWithDetails()
+            .Where(r => r.RoomId == roomId
+                && r.Status != ReservationStatus.Cancelled
+                && r.Status != ReservationStatus.CheckedOut
+                && r.Status != ReservationStatus.NoShow
+                && r.CheckInDate < checkOut && r.CheckOutDate > checkIn));
+
+    #endregion
+
+    #region Queries
 
     /// <summary>
     /// Reservations with the navigation properties ReservationDto needs
@@ -169,114 +396,16 @@ public class ReservationService : IReservationService
         return reservations.Select(MapToDto);
     }
 
+    public async Task<ReservationDto?> GetReservationByIdAsync(int id)
+    {
+        var reservation = await QueryWithDetails().FirstOrDefaultAsync(r => r.Id == id);
+        return reservation == null ? null : MapToDto(reservation);
+    }
+
     public Task<IEnumerable<ReservationDto>> GetReservationsForHotelsAsync(IReadOnlyCollection<int> hotelIds) =>
         ToDtosAsync(QueryWithDetails()
             .Where(r => hotelIds.Contains(r.HotelId))
             .OrderByDescending(r => r.CreatedAt));
-
-    public async Task<ReservationDto> UpdateReservationAsync(int id, UpdateReservationDto updateDto)
-    {
-        var reservation = await _context.Reservations
-            .Include(r => r.Room)
-            .FirstOrDefaultAsync(r => r.Id == id);
-        
-        if (reservation == null)
-            throw new KeyNotFoundException($"Reservation with ID {id} not found");
-
-        // For checked-out or cancelled reservations, only allow updating notes, special requests, and payment reference
-        if (reservation.Status == ReservationStatus.CheckedOut || reservation.Status == ReservationStatus.Cancelled || reservation.Status == ReservationStatus.NoShow)
-        {
-            // Only update administrative fields
-            reservation.Notes = updateDto.Notes;
-            reservation.SpecialRequests = updateDto.SpecialRequests;
-            reservation.PaymentReference = updateDto.PaymentReference;
-            reservation.UpdatedAt = DateTime.UtcNow;
-            
-            await _context.SaveChangesAsync();
-            return MapToDto(reservation);
-        }
-
-        // For active reservations (Pending, Confirmed, CheckedIn), allow full updates
-        if (reservation.Status != ReservationStatus.Pending && 
-            reservation.Status != ReservationStatus.Confirmed && 
-            reservation.Status != ReservationStatus.CheckedIn)
-        {
-            throw new InvalidOperationException($"Cannot update reservation with status {reservation.Status}");
-        }
-
-        // Validate dates based on booking type
-        if (reservation.BookingType == BookingType.ShortStay)
-        {
-            // For short stays, allow same-day bookings but check-out must be after check-in (time-wise)
-            if (updateDto.CheckOutDate <= updateDto.CheckInDate)
-                throw new InvalidOperationException("Check-out time must be after check-in time");
-        }
-        else
-        {
-            // For overnight stays, check-out must be on a later date
-            if (updateDto.CheckOutDate.Date <= updateDto.CheckInDate.Date)
-                throw new InvalidOperationException("Check-out date must be after check-in date for overnight stays");
-        }
-
-        // Check availability if dates changed
-        if (reservation.CheckInDate != updateDto.CheckInDate || reservation.CheckOutDate != updateDto.CheckOutDate)
-        {
-            var (isAvailable, conflictInfo) = await CheckAvailabilityWithDetailsAsync(reservation.RoomId, updateDto.CheckInDate, updateDto.CheckOutDate, reservation.BookingType, id);
-            if (!isAvailable)
-                throw new InvalidOperationException($"Room is not available for the new dates. {conflictInfo}");
-
-            // Recalculate price
-            reservation.TotalAmount = CalculatePrice(reservation.Room, updateDto.CheckInDate, updateDto.CheckOutDate, reservation.BookingType);
-            reservation.RemainingAmount = reservation.TotalAmount - reservation.DepositAmount;
-        }
-
-        // Update fields
-        reservation.CheckInDate = updateDto.CheckInDate;
-        reservation.CheckOutDate = updateDto.CheckOutDate;
-        reservation.DurationInHours = updateDto.DurationInHours;
-        reservation.NumberOfGuests = updateDto.NumberOfGuests;
-        reservation.DepositAmount = updateDto.DepositAmount;
-        reservation.RemainingAmount = reservation.TotalAmount - updateDto.DepositAmount;
-        reservation.PaymentMethod = updateDto.PaymentMethod;
-        reservation.PaymentReference = updateDto.PaymentReference;
-        reservation.SpecialRequests = updateDto.SpecialRequests;
-        reservation.Notes = updateDto.Notes;
-        reservation.UpdatedAt = DateTime.UtcNow;
-
-        // Update payment status
-        if (reservation.DepositAmount >= reservation.TotalAmount)
-            reservation.PaymentStatus = PaymentStatus.Paid;
-        else if (reservation.DepositAmount > 0)
-            reservation.PaymentStatus = PaymentStatus.PartiallyPaid;
-        else
-            reservation.PaymentStatus = PaymentStatus.Unpaid;
-
-        await _context.SaveChangesAsync();
-
-        return await GetReservationByIdAsync(id)
-            ?? throw new InvalidOperationException("Failed to retrieve updated reservation");
-    }
-
-    public async Task DeleteReservationAsync(int id)
-    {
-        var reservation = await _context.Reservations.FindAsync(id);
-        if (reservation == null)
-            throw new KeyNotFoundException($"Reservation with ID {id} not found");
-
-        // If the room is currently occupied by this reservation, free it up
-        if (reservation.Status == ReservationStatus.CheckedIn)
-        {
-            var room = await _context.Rooms.FindAsync(reservation.RoomId);
-            if (room != null)
-            {
-                room.Status = RoomStatus.Available;
-                _context.Rooms.Update(room);
-            }
-        }
-
-        _context.Reservations.Remove(reservation);
-        await _context.SaveChangesAsync();
-    }
 
     public Task<IEnumerable<ReservationDto>> GetReservationsByHotelAsync(int hotelId) =>
         ToDtosAsync(QueryWithDetails()
@@ -336,269 +465,96 @@ public class ReservationService : IReservationService
             .OrderBy(r => r.CheckOutDate));
     }
 
-    public async Task<bool> IsRoomAvailableAsync(int roomId, DateTime checkIn, DateTime checkOut, int? excludeReservationId = null)
+    public async Task<IEnumerable<PaymentDto>> GetPaymentsAsync(int reservationId)
     {
-        var (isAvailable, _) = await CheckAvailabilityWithDetailsAsync(roomId, checkIn, checkOut, BookingType.Daily, excludeReservationId);
-        return isAvailable;
-    }
-    
-    private async Task<(bool isAvailable, string conflictInfo)> CheckAvailabilityWithDetailsAsync(
-        int roomId, 
-        DateTime checkIn, 
-        DateTime checkOut, 
-        BookingType bookingType,
-        int? excludeReservationId = null)
-    {
-        // Get the hotel to fetch buffer time configuration
-        var room = await _context.Rooms
-            .Include(r => r.Hotel)
-            .FirstOrDefaultAsync(r => r.Id == roomId);
-        
-        if (room == null)
-            return (false, "Room not found");
-        
-        // Use hotel-specific buffer time, fallback to default if not set
-        int bufferHours = room.Hotel?.BufferTimeHours ?? DEFAULT_BUFFER_HOURS;
-        
-        var existingReservations = await _context.Reservations
-            .Include(r => r.Guest)
-            .Where(r => r.RoomId == roomId
-                && r.Status != ReservationStatus.Cancelled
-                && r.Status != ReservationStatus.CheckedOut
-                && r.Status != ReservationStatus.NoShow
-                && (excludeReservationId == null || r.Id != excludeReservationId))
+        return await _context.Payments
+            .Where(p => p.ReservationId == reservationId)
+            .OrderBy(p => p.CreatedAt)
+            .Select(p => new PaymentDto
+            {
+                Id = p.Id,
+                ReservationId = p.ReservationId,
+                Type = p.Type,
+                Amount = p.Amount,
+                Method = p.Method,
+                Reference = p.Reference,
+                Notes = p.Notes,
+                CreatedAt = p.CreatedAt,
+                CreatedByName = p.CreatedBy != null ? p.CreatedBy.FirstName + " " + p.CreatedBy.LastName : null
+            })
             .ToListAsync();
-
-        foreach (var existing in existingReservations)
-        {
-            bool hasConflict = false;
-            string conflictReason = "";
-
-            // Different logic for short-stay vs overnight bookings
-            if (bookingType == BookingType.ShortStay && existing.BookingType == BookingType.ShortStay)
-            {
-                // For short-stay bookings, check exact time overlap
-                if (checkIn < existing.CheckOutDate && checkOut > existing.CheckInDate)
-                {
-                    hasConflict = true;
-                    conflictReason = $"Overlaps with short-stay booking from {existing.CheckInDate:g} to {existing.CheckOutDate:g}";
-                }
-            }
-            else if (bookingType == BookingType.ShortStay && existing.BookingType == BookingType.Daily)
-            {
-                // Short-stay trying to book during an overnight reservation
-                // Check if short-stay falls within the overnight booking period
-                if (checkIn.Date >= existing.CheckInDate.Date && checkIn.Date < existing.CheckOutDate.Date)
-                {
-                    hasConflict = true;
-                    conflictReason = $"Room is booked overnight from {existing.CheckInDate:d} to {existing.CheckOutDate:d}";
-                }
-            }
-            else if (bookingType == BookingType.Daily && existing.BookingType == BookingType.ShortStay)
-            {
-                // Overnight booking trying to book when there's a short-stay
-                // Check if short-stay falls within the requested overnight period
-                if (existing.CheckInDate.Date >= checkIn.Date && existing.CheckInDate.Date < checkOut.Date)
-                {
-                    hasConflict = true;
-                    conflictReason = $"Room has a short-stay booking on {existing.CheckInDate:d} from {existing.CheckInDate:t} to {existing.CheckOutDate:t}";
-                }
-            }
-            else // Both overnight bookings
-            {
-                // For overnight bookings, allow same-day turnover with buffer time
-                var existingCheckOutWithBuffer = existing.CheckOutDate.AddHours(bufferHours);
-                var newCheckInWithBuffer = checkIn.AddHours(-bufferHours);
-
-                // Check if there's overlap considering buffer time
-                if (newCheckInWithBuffer < existing.CheckOutDate && checkOut > existing.CheckInDate)
-                {
-                    // Check if it's a same-day turnover (check-out day = check-in day)
-                    if (checkIn.Date == existing.CheckOutDate.Date)
-                    {
-                        // Allow if check-in time is after check-out time + buffer
-                        if (checkIn < existingCheckOutWithBuffer)
-                        {
-                            hasConflict = true;
-                            var earliestCheckIn = existingCheckOutWithBuffer;
-                            conflictReason = $"Room is occupied until {existing.CheckOutDate:g}. Earliest check-in: {earliestCheckIn:g} ({bufferHours}h cleaning buffer)";
-                        }
-                    }
-                    else if (checkIn < existing.CheckOutDate && checkOut > existing.CheckInDate)
-                    {
-                        // Regular date overlap (not same-day turnover)
-                        hasConflict = true;
-                        conflictReason = $"Overlaps with existing reservation from {existing.CheckInDate:d} to {existing.CheckOutDate:d}";
-                    }
-                }
-            }
-
-            if (hasConflict)
-            {
-                var guestName = existing.Guest != null ? $"{existing.Guest.FirstName} {existing.Guest.LastName}" : "Unknown";
-                return (false, $"{conflictReason}. Guest: {guestName}, Reservation #{existing.Id}");
-            }
-        }
-
-        return (true, string.Empty);
     }
 
-    public Task<IEnumerable<ReservationDto>> GetConflictingReservationsAsync(int roomId, DateTime checkIn, DateTime checkOut) =>
-        ToDtosAsync(QueryWithDetails()
-            .Where(r => r.RoomId == roomId
-                && r.Status != ReservationStatus.Cancelled
-                && r.Status != ReservationStatus.CheckedOut
-                && r.Status != ReservationStatus.NoShow
-                && r.CheckInDate < checkOut && r.CheckOutDate > checkIn));
+    #endregion
 
-    public async Task<IEnumerable<RoomDto>> GetAvailableRoomsAsync(
-        int hotelId, 
-        DateTime checkIn, 
-        DateTime checkOut, 
-        BookingType bookingType,
-        int? minCapacity = null, 
-        string? roomType = null)
+    #region Status changes
+
+    private async Task<Reservation> LoadForChangeAsync(int id)
     {
-        // Get all rooms for the hotel that match the criteria
-        var roomsQuery = _context.Rooms
-            .Include(r => r.Hotel)
-            .Where(r => r.HotelId == hotelId && r.Status != RoomStatus.OutOfService);
+        return await _context.Reservations
+            .Include(r => r.Room)
+            .Include(r => r.Guest)
+            .Include(r => r.Payments)
+            .FirstOrDefaultAsync(r => r.Id == id)
+            ?? throw new KeyNotFoundException($"Reservation with ID {id} not found");
+    }
 
-        // Filter by booking type compatibility
-        if (bookingType == BookingType.ShortStay)
-        {
-            roomsQuery = roomsQuery.Where(r => r.AllowsShortStay);
-        }
-
-        // Filter by capacity if specified
-        if (minCapacity.HasValue)
-        {
-            roomsQuery = roomsQuery.Where(r => r.Capacity >= minCapacity.Value);
-        }
-
-        // Filter by room type if specified
-        if (!string.IsNullOrEmpty(roomType))
-        {
-            // Convert string to RoomType enum
-            if (Enum.TryParse<RoomType>(roomType, true, out var roomTypeEnum))
-            {
-                roomsQuery = roomsQuery.Where(r => r.Type == roomTypeEnum);
-            }
-        }
-
-        var rooms = await roomsQuery.ToListAsync();
-
-        // Check availability for each room
-        var availableRooms = new List<RoomDto>();
-        
-        foreach (var room in rooms)
-        {
-            var (isAvailable, _) = await CheckAvailabilityWithDetailsAsync(room.Id, checkIn, checkOut, bookingType);
-            
-            if (isAvailable)
-            {
-                availableRooms.Add(new RoomDto
-                {
-                    Id = room.Id,
-                    HotelId = room.HotelId,
-                    HotelName = room.Hotel?.Name,
-                    RoomNumber = room.RoomNumber,
-                    Type = room.Type,
-                    Floor = room.Floor,
-                    Capacity = room.Capacity,
-                    PricePerNight = room.PricePerNight,
-                    ShortStayHourlyRate = room.ShortStayHourlyRate,
-                    AllowsShortStay = room.AllowsShortStay,
-                    MinimumShortStayHours = room.MinimumShortStayHours,
-                    MaximumShortStayHours = room.MaximumShortStayHours,
-                    Status = room.Status,
-                    Description = room.Description,
-                    Amenities = room.Amenities,
-                    CreatedAt = room.CreatedAt,
-                    UpdatedAt = room.UpdatedAt
-                });
-            }
-        }
-
-        return availableRooms.OrderBy(r => r.RoomNumber);
+    private async Task<ReservationDto> SaveAndReloadAsync(Reservation reservation)
+    {
+        reservation.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+        return await GetReservationByIdAsync(reservation.Id)
+            ?? throw new InvalidOperationException($"Failed to retrieve reservation {reservation.Id}");
     }
 
     public async Task<ReservationDto> ConfirmReservationAsync(int id)
     {
-        var reservation = await _context.Reservations.FindAsync(id);
-        if (reservation == null)
-            throw new KeyNotFoundException($"Reservation with ID {id} not found");
+        var reservation = await LoadForChangeAsync(id);
 
         if (reservation.Status != ReservationStatus.Pending)
-            throw new InvalidOperationException($"Only pending reservations can be confirmed");
+            throw new InvalidOperationException("Only pending reservations can be confirmed");
 
         reservation.Status = ReservationStatus.Confirmed;
         reservation.ConfirmedAt = DateTime.UtcNow;
-        reservation.UpdatedAt = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync();
-
-        return await GetReservationByIdAsync(id)
-            ?? throw new InvalidOperationException("Failed to retrieve confirmed reservation");
+        return await SaveAndReloadAsync(reservation);
     }
 
     public async Task<ReservationDto> CheckInReservationAsync(int id)
     {
-        var reservation = await _context.Reservations
-            .Include(r => r.Room)
-            .FirstOrDefaultAsync(r => r.Id == id);
-        
-        if (reservation == null)
-            throw new KeyNotFoundException($"Reservation with ID {id} not found");
+        var reservation = await LoadForChangeAsync(id);
 
         if (reservation.Status != ReservationStatus.Confirmed)
-            throw new InvalidOperationException($"Only confirmed reservations can be checked in");
+            throw new InvalidOperationException("Only confirmed reservations can be checked in");
+
+        if (reservation.Room.Status is RoomStatus.Occupied or RoomStatus.Maintenance or RoomStatus.OutOfService)
+            throw new InvalidOperationException($"Room {reservation.Room.RoomNumber} is {reservation.Room.Status} and can't take a guest right now");
 
         reservation.Status = ReservationStatus.CheckedIn;
         reservation.CheckedInAt = DateTime.UtcNow;
-        reservation.UpdatedAt = DateTime.UtcNow;
-
-        // Update room status
         reservation.Room.Status = RoomStatus.Occupied;
         reservation.Room.UpdatedAt = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync();
-
-        return await GetReservationByIdAsync(id)
-            ?? throw new InvalidOperationException("Failed to retrieve checked-in reservation");
+        return await SaveAndReloadAsync(reservation);
     }
 
     public async Task<ReservationDto> CheckOutReservationAsync(int id)
     {
-        var reservation = await _context.Reservations
-            .Include(r => r.Room)
-            .FirstOrDefaultAsync(r => r.Id == id);
-        
-        if (reservation == null)
-            throw new KeyNotFoundException($"Reservation with ID {id} not found");
+        var reservation = await LoadForChangeAsync(id);
 
         if (reservation.Status != ReservationStatus.CheckedIn)
-            throw new InvalidOperationException($"Only checked-in reservations can be checked out");
+            throw new InvalidOperationException("Only checked-in reservations can be checked out");
 
+        var now = DateTime.UtcNow;
         reservation.Status = ReservationStatus.CheckedOut;
-        reservation.CheckedOutAt = DateTime.UtcNow;
-        reservation.UpdatedAt = DateTime.UtcNow;
-
-        // Update room status
+        reservation.CheckedOutAt = now;
         reservation.Room.Status = RoomStatus.Cleaning;
-        reservation.Room.UpdatedAt = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync();
-
-        return await GetReservationByIdAsync(id)
-            ?? throw new InvalidOperationException("Failed to retrieve checked-out reservation");
+        reservation.Room.UpdatedAt = now;
+        reservation.Guest.LastStayDate = now;
+        return await SaveAndReloadAsync(reservation);
     }
 
     public async Task<ReservationDto> CancelReservationAsync(int id, string reason)
     {
-        var reservation = await _context.Reservations.FindAsync(id);
-        if (reservation == null)
-            throw new KeyNotFoundException($"Reservation with ID {id} not found");
+        var reservation = await LoadForChangeAsync(id);
 
         if (!reservation.CanCancel)
             throw new InvalidOperationException($"Reservation with status {reservation.Status} cannot be cancelled");
@@ -606,91 +562,128 @@ public class ReservationService : IReservationService
         reservation.Status = ReservationStatus.Cancelled;
         reservation.CancelledAt = DateTime.UtcNow;
         reservation.CancellationReason = reason;
-        reservation.UpdatedAt = DateTime.UtcNow;
-
-        // Handle refund if payment was made
-        if (reservation.DepositAmount > 0)
-        {
-            reservation.PaymentStatus = PaymentStatus.Refunding;
-        }
-
-        await _context.SaveChangesAsync();
-
-        return await GetReservationByIdAsync(id)
-            ?? throw new InvalidOperationException("Failed to retrieve cancelled reservation");
+        RecalculateBalance(reservation); // anything already paid is now owed back
+        return await SaveAndReloadAsync(reservation);
     }
 
     public async Task<ReservationDto> MarkAsNoShowAsync(int id)
     {
-        var reservation = await _context.Reservations.FindAsync(id);
-        if (reservation == null)
-            throw new KeyNotFoundException($"Reservation with ID {id} not found");
+        var reservation = await LoadForChangeAsync(id);
 
         if (reservation.Status != ReservationStatus.Confirmed)
-            throw new InvalidOperationException($"Only confirmed reservations can be marked as no-show");
+            throw new InvalidOperationException("Only confirmed reservations can be marked as no-show");
 
         reservation.Status = ReservationStatus.NoShow;
-        reservation.UpdatedAt = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync();
-
-        return await GetReservationByIdAsync(id)
-            ?? throw new InvalidOperationException("Failed to retrieve no-show reservation");
+        return await SaveAndReloadAsync(reservation);
     }
+
+    #endregion
+
+    #region Money
 
     public async Task<ReservationDto> RecordPaymentAsync(int id, decimal amount, PaymentMethod paymentMethod, string? reference = null)
     {
-        var reservation = await _context.Reservations.FindAsync(id);
-        if (reservation == null)
-            throw new KeyNotFoundException($"Reservation with ID {id} not found");
+        var reservation = await LoadForChangeAsync(id);
 
         if (amount <= 0)
             throw new InvalidOperationException("Payment amount must be greater than 0");
 
-        if (reservation.DepositAmount + amount > reservation.TotalAmount)
-            throw new InvalidOperationException($"Payment amount exceeds remaining balance");
+        if (reservation.Status == ReservationStatus.Cancelled)
+            throw new InvalidOperationException("Cannot take payments on a cancelled reservation");
 
-        reservation.DepositAmount += amount;
-        reservation.RemainingAmount = reservation.TotalAmount - reservation.DepositAmount;
+        if (amount > reservation.RemainingAmount)
+            throw new InvalidOperationException($"Payment amount exceeds remaining balance ({reservation.RemainingAmount:0.00})");
+
+        reservation.Payments.Add(new Payment
+        {
+            Type = PaymentTransactionType.Payment,
+            Amount = amount,
+            Method = paymentMethod,
+            Reference = reference,
+            CreatedByUserId = TryGetCurrentUserId()
+        });
         reservation.PaymentMethod = paymentMethod;
         reservation.PaymentReference = reference;
-        reservation.UpdatedAt = DateTime.UtcNow;
-
-        // Update payment status
-        if (reservation.DepositAmount >= reservation.TotalAmount)
-            reservation.PaymentStatus = PaymentStatus.Paid;
-        else if (reservation.DepositAmount > 0)
-            reservation.PaymentStatus = PaymentStatus.PartiallyPaid;
-
-        await _context.SaveChangesAsync();
-
-        return await GetReservationByIdAsync(id)
-            ?? throw new InvalidOperationException("Failed to retrieve reservation after payment");
+        RecalculateBalance(reservation);
+        return await SaveAndReloadAsync(reservation);
     }
 
     public async Task<ReservationDto> RecordRefundAsync(int id, decimal amount, string? reason = null)
     {
-        var reservation = await _context.Reservations.FindAsync(id);
-        if (reservation == null)
-            throw new KeyNotFoundException($"Reservation with ID {id} not found");
+        var reservation = await LoadForChangeAsync(id);
 
         if (amount <= 0)
             throw new InvalidOperationException("Refund amount must be greater than 0");
 
         if (amount > reservation.DepositAmount)
-            throw new InvalidOperationException($"Refund amount cannot exceed paid amount");
+            throw new InvalidOperationException($"Refund amount cannot exceed the amount paid ({reservation.DepositAmount:0.00})");
 
-        reservation.DepositAmount -= amount;
-        reservation.RemainingAmount = reservation.TotalAmount - reservation.DepositAmount;
-        reservation.PaymentStatus = PaymentStatus.Refunded;
-        reservation.CancellationReason = reason;
-        reservation.UpdatedAt = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync();
-
-        return await GetReservationByIdAsync(id)
-            ?? throw new InvalidOperationException("Failed to retrieve reservation after refund");
+        reservation.Payments.Add(new Payment
+        {
+            Type = PaymentTransactionType.Refund,
+            Amount = amount,
+            Method = reservation.PaymentMethod,
+            Notes = reason,
+            CreatedByUserId = TryGetCurrentUserId()
+        });
+        RecalculateBalance(reservation);
+        return await SaveAndReloadAsync(reservation);
     }
+
+    public async Task<ReservationDto> ApplyPriceAdjustmentAsync(int id, decimal discountAmount, string? reason, decimal? overridePrice)
+    {
+        var reservation = await LoadForChangeAsync(id);
+
+        if (!IsOpen(reservation.Status))
+            throw new InvalidOperationException("Prices can only be adjusted on open reservations");
+
+        var roomPrice = CalculateRoomPrice(reservation.Room, reservation.CheckInDate, reservation.CheckOutDate, reservation.BookingType);
+
+        if (overridePrice.HasValue)
+        {
+            if (overridePrice.Value < 0 || overridePrice.Value > roomPrice)
+                throw new InvalidOperationException($"Override price must be between 0 and the room price ({roomPrice:0.00})");
+            // Stored as a discount so the room price and the markdown both stay visible
+            discountAmount = roomPrice - overridePrice.Value;
+            reason ??= $"Price override to {overridePrice.Value:0.00}";
+        }
+
+        if (discountAmount < 0 || discountAmount > roomPrice)
+            throw new InvalidOperationException($"Discount must be between 0 and the room price ({roomPrice:0.00})");
+
+        reservation.DiscountAmount = discountAmount;
+        reservation.DiscountReason = reason;
+        reservation.TotalAmount = roomPrice - discountAmount + reservation.ExtraCharges;
+
+        if (reservation.DepositAmount > reservation.TotalAmount)
+            throw new InvalidOperationException("The new total is below what has already been paid; refund the difference first");
+
+        RecalculateBalance(reservation);
+        return await SaveAndReloadAsync(reservation);
+    }
+
+    public async Task<ReservationDto> AddExtraChargesAsync(int id, decimal amount, string? notes)
+    {
+        var reservation = await LoadForChangeAsync(id);
+
+        if (amount <= 0)
+            throw new InvalidOperationException("Extra charges must be greater than 0");
+
+        if (reservation.Status != ReservationStatus.CheckedIn)
+            throw new InvalidOperationException("Extra charges can only be added while the guest is checked in");
+
+        reservation.ExtraCharges += amount;
+        reservation.ExtraChargesNotes = string.IsNullOrWhiteSpace(reservation.ExtraChargesNotes)
+            ? notes
+            : $"{reservation.ExtraChargesNotes}; {notes}";
+        reservation.TotalAmount += amount;
+        RecalculateBalance(reservation);
+        return await SaveAndReloadAsync(reservation);
+    }
+
+    #endregion
+
+    #region Statistics
 
     public Task<int> GetTotalReservationsCountAsync(IReadOnlyCollection<int> hotelIds) =>
         _context.Reservations.CountAsync(r => hotelIds.Contains(r.HotelId));
@@ -722,7 +715,9 @@ public class ReservationService : IReservationService
         return counts.OrderBy(x => x.Month).ToDictionary(x => $"{year}-{x.Month:D2}", x => x.Count);
     }
 
-    private ReservationDto MapToDto(Reservation reservation)
+    #endregion
+
+    private static ReservationDto MapToDto(Reservation reservation)
     {
         return new ReservationDto
         {
@@ -747,6 +742,10 @@ public class ReservationService : IReservationService
             PaymentStatus = reservation.PaymentStatus,
             PaymentMethod = reservation.PaymentMethod,
             PaymentReference = reservation.PaymentReference,
+            DiscountAmount = reservation.DiscountAmount,
+            DiscountReason = reservation.DiscountReason,
+            ExtraCharges = reservation.ExtraCharges,
+            ExtraChargesNotes = reservation.ExtraChargesNotes,
             SpecialRequests = reservation.SpecialRequests,
             Notes = reservation.Notes,
             CreatedAt = reservation.CreatedAt,

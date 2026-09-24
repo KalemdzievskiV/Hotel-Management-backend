@@ -67,6 +67,11 @@ public class ReservationsController : ControllerBase
             var myProfile = await _guestService.GetByUserIdAsync(CurrentUserId!);
             if (myProfile == null || myProfile.Id != createDto.GuestId)
                 return Forbid();
+
+            // Only staff can record money received; a guest's booking starts unpaid
+            createDto.DepositAmount = 0;
+            createDto.PaymentReference = null;
+            createDto.Notes = null;
         }
         else if (!await _hotelAccess.CanAccessHotelAsync(createDto.HotelId))
         {
@@ -120,14 +125,13 @@ public class ReservationsController : ControllerBase
         if (!await CanAccessReservationAsync(id))
             return Forbid();
 
-        // Guests may change their stay details, but payments and internal staff notes are staff-only
+        // Guests may change their stay details, but payment details and internal staff notes are staff-only
         if (User.IsInRole(AppRoles.Guest))
         {
             var existing = await _reservationService.GetReservationByIdAsync(id);
             if (existing == null)
                 return NotFound();
 
-            updateDto.DepositAmount = existing.DepositAmount;
             updateDto.PaymentMethod = existing.PaymentMethod;
             updateDto.PaymentReference = existing.PaymentReference;
             updateDto.Notes = existing.Notes;
@@ -353,6 +357,18 @@ public class ReservationsController : ControllerBase
             return Forbid();
 
         return Ok(await _reservationService.RecordRefundAsync(id, request.Amount, request.Reason));
+    }
+
+    /// <summary>
+    /// Payment ledger of a reservation
+    /// </summary>
+    [HttpGet("{id:int}/payments")]
+    public async Task<IActionResult> GetPayments(int id)
+    {
+        if (!await CanAccessReservationAsync(id))
+            return Forbid();
+
+        return Ok(await _reservationService.GetPaymentsAsync(id));
     }
 
     [HttpGet("stats/count")]

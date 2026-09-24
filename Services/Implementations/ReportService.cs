@@ -226,35 +226,41 @@ namespace HotelManagement.Services.Implementations
                 .ToListAsync();
         }
 
+        /// <summary>
+        /// Money actually received per day and method, from the payments ledger.
+        /// Refunds count as negative amounts on the day they were paid out.
+        /// </summary>
         public async Task<IEnumerable<PaymentReconciliationDto>> GetPaymentReconciliationAsync(DateTime startDate, DateTime endDate)
         {
             var hotelIds = await GetAccessibleHotelIdsAsync();
+            var endExclusive = endDate.Date.AddDays(1);
 
-            var payments = await _context.Reservations
-                .Where(r => hotelIds.Contains(r.HotelId) &&
-                            r.UpdatedAt.HasValue &&
-                            r.UpdatedAt.Value >= startDate &&
-                            r.UpdatedAt.Value <= endDate &&
-                            r.PaymentStatus != PaymentStatus.Unpaid)
-                .Select(r => new { r.UpdatedAt, r.TotalAmount, r.PaymentMethod })
+            var payments = await _context.Payments
+                .Where(p => hotelIds.Contains(p.Reservation.HotelId) &&
+                            p.CreatedAt >= startDate &&
+                            p.CreatedAt < endExclusive)
+                .Select(p => new
+                {
+                    p.CreatedAt,
+                    p.Method,
+                    SignedAmount = p.Type == PaymentTransactionType.Payment ? p.Amount : -p.Amount
+                })
                 .ToListAsync();
 
             return payments
-                .GroupBy(r => r.UpdatedAt!.Value.Date)
+                .GroupBy(p => p.CreatedAt.Date)
                 .Select(g => new PaymentReconciliationDto
                 {
                     Date = g.Key,
                     TotalTransactions = g.Count(),
-                    CashRevenue = g.Where(r => r.PaymentMethod == PaymentMethod.Cash).Sum(r => r.TotalAmount),
-                    CardRevenue = g.Where(r => r.PaymentMethod == PaymentMethod.CreditCard || r.PaymentMethod == PaymentMethod.DebitCard).Sum(r => r.TotalAmount),
-                    BankTransferRevenue = g.Where(r => r.PaymentMethod == PaymentMethod.BankTransfer).Sum(r => r.TotalAmount),
-                    OtherRevenue = g.Where(r => r.PaymentMethod != PaymentMethod.Cash &&
-                                                r.PaymentMethod != PaymentMethod.CreditCard &&
-                                                r.PaymentMethod != PaymentMethod.DebitCard &&
-                                                r.PaymentMethod != PaymentMethod.BankTransfer).Sum(r => r.TotalAmount),
-                    TotalRevenue = g.Sum(r => r.TotalAmount)
+                    CashRevenue = g.Where(p => p.Method == PaymentMethod.Cash).Sum(p => p.SignedAmount),
+                    CardRevenue = g.Where(p => p.Method is PaymentMethod.CreditCard or PaymentMethod.DebitCard).Sum(p => p.SignedAmount),
+                    BankTransferRevenue = g.Where(p => p.Method == PaymentMethod.BankTransfer).Sum(p => p.SignedAmount),
+                    OtherRevenue = g.Where(p => p.Method is not (PaymentMethod.Cash or PaymentMethod.CreditCard or PaymentMethod.DebitCard or PaymentMethod.BankTransfer)).Sum(p => p.SignedAmount),
+                    TotalRevenue = g.Sum(p => p.SignedAmount)
                 })
-                .OrderBy(r => r.Date);
+                .OrderBy(r => r.Date)
+                .ToList();
         }
     }
 }

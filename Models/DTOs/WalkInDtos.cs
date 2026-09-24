@@ -25,15 +25,19 @@ public class QuickCheckInDto
 
     public int? DurationInHours { get; set; }
 
+    [Range(1, 20)]
     public int NumberOfGuests { get; set; } = 1;
 
+    [Range(0, 1000000)]
     public decimal? OverridePrice { get; set; }
 
+    [Range(0, 1000000)]
     public decimal DiscountAmount { get; set; } = 0;
 
     [MaxLength(200)]
     public string? DiscountReason { get; set; }
 
+    [Range(0, 1000000)]
     public decimal DepositAmount { get; set; } = 0;
 
     public PaymentMethod? PaymentMethod { get; set; }
@@ -73,11 +77,13 @@ public class QuickGuestDto
 
 public class ExpressCheckOutDto
 {
+    [Range(0, 1000000)]
     public decimal ExtraCharges { get; set; } = 0;
 
     [MaxLength(500)]
     public string? ExtraChargesNotes { get; set; }
 
+    [Range(0, 1000000)]
     public decimal? FinalPayment { get; set; }
 
     public PaymentMethod? PaymentMethod { get; set; }

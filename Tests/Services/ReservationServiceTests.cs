@@ -1,5 +1,6 @@
 using AutoMapper;
 using HotelManagement.Data;
+using HotelManagement.Infrastructure.Mapping;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Models.Enums;
@@ -15,7 +16,6 @@ namespace HotelManagement.Tests.Services;
 public class ReservationServiceTests
 {
     private readonly ApplicationDbContext _context;
-    private readonly Mock<IMapper> _mapperMock;
     private readonly Mock<IHttpContextAccessor> _httpContextAccessorMock;
     private readonly ReservationService _service;
 
@@ -26,7 +26,6 @@ public class ReservationServiceTests
             .Options;
 
         _context = new ApplicationDbContext(options);
-        _mapperMock = new Mock<IMapper>();
         _httpContextAccessorMock = new Mock<IHttpContextAccessor>();
 
         // Setup HTTP context with user ID
@@ -37,7 +36,7 @@ public class ReservationServiceTests
         var httpContext = new DefaultHttpContext { User = user };
         _httpContextAccessorMock.Setup(x => x.HttpContext).Returns(httpContext);
 
-        _service = new ReservationService(_context, _mapperMock.Object, _httpContextAccessorMock.Object);
+        _service = new ReservationService(_context, new MapperConfiguration(cfg => cfg.AddProfile<AutoMapperProfile>()).CreateMapper(), _httpContextAccessorMock.Object);
     }
 
     private async Task SeedTestData()
@@ -529,6 +528,7 @@ public class ReservationServiceTests
             NumberOfGuests = 2,
             TotalAmount = 300,
             DepositAmount = 100,
+            Payments = { new Payment { Type = PaymentTransactionType.Payment, Amount = 100 } },
             CreatedAt = DateTime.UtcNow
         };
         _context.Reservations.Add(reservation);
@@ -563,6 +563,7 @@ public class ReservationServiceTests
             TotalAmount = 300,
             DepositAmount = 100,
             RemainingAmount = 200,
+            Payments = { new Payment { Type = PaymentTransactionType.Payment, Amount = 100, Method = PaymentMethod.Cash } },
             PaymentStatus = PaymentStatus.PartiallyPaid,
             CreatedAt = DateTime.UtcNow
         };
@@ -598,6 +599,7 @@ public class ReservationServiceTests
             TotalAmount = 300,
             DepositAmount = 100,
             RemainingAmount = 200,
+            Payments = { new Payment { Type = PaymentTransactionType.Payment, Amount = 100, Method = PaymentMethod.Cash } },
             CreatedAt = DateTime.UtcNow
         };
         _context.Reservations.Add(reservation);

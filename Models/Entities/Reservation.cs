@@ -106,6 +106,8 @@ public class Reservation
     [MaxLength(1000)]
     public string? Notes { get; set; } // Internal staff notes
     
+    public ICollection<Payment> Payments { get; set; } = new List<Payment>();
+
     // Timestamps
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     

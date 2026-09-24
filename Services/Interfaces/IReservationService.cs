@@ -40,6 +40,11 @@ public interface IReservationService
     // Payment
     Task<ReservationDto> RecordPaymentAsync(int id, decimal amount, PaymentMethod paymentMethod, string? reference = null);
     Task<ReservationDto> RecordRefundAsync(int id, decimal amount, string? reason = null);
+    Task<IEnumerable<PaymentDto>> GetPaymentsAsync(int reservationId);
+
+    /// <summary>Sets a discount off the room price, or an override price expressed as one</summary>
+    Task<ReservationDto> ApplyPriceAdjustmentAsync(int id, decimal discountAmount, string? reason, decimal? overridePrice);
+    Task<ReservationDto> AddExtraChargesAsync(int id, decimal amount, string? notes);
     
     // Statistics
     Task<int> GetTotalReservationsCountAsync(IReadOnlyCollection<int> hotelIds);

@@ -20,6 +20,7 @@ namespace HotelManagement.Data
         public DbSet<InventoryItem> InventoryItems { get; set; }
         public DbSet<InventoryTransaction> InventoryTransactions { get; set; }
         public DbSet<HousekeepingTask> HousekeepingTasks { get; set; }
+        public DbSet<Payment> Payments { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -87,6 +88,26 @@ namespace HotelManagement.Data
                 .HasForeignKey(r => r.CreatedByUserId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired(true);
+
+            // Room numbers are unique within a hotel
+            modelBuilder.Entity<Room>()
+                .HasIndex(r => new { r.HotelId, r.RoomNumber })
+                .IsUnique();
+
+            // Reservation -> Payments: CASCADE (reservations with money on them can't be deleted anyway)
+            modelBuilder.Entity<Payment>()
+                .HasOne(p => p.Reservation)
+                .WithMany(r => r.Payments)
+                .HasForeignKey(p => p.ReservationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Payment -> CreatedBy: SET NULL so staff accounts can be removed without losing the ledger
+            modelBuilder.Entity<Payment>()
+                .HasOne(p => p.CreatedBy)
+                .WithMany()
+                .HasForeignKey(p => p.CreatedByUserId)
+                .OnDelete(DeleteBehavior.SetNull)
+                .IsRequired(false);
 
             // InventoryItem -> Hotel: CASCADE
             modelBuilder.Entity<InventoryItem>()

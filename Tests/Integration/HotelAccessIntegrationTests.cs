@@ -194,7 +194,8 @@ public class HotelAccessIntegrationTests : IClassFixture<CustomWebApplicationFac
             NumberOfGuests = 1
         });
 
-        var updated = await SendAsync<ReservationDto>(HttpMethod.Put, $"/api/Reservations/{created.Id}", guestToken, new UpdateReservationDto
+        // Payments only go through the payment endpoint; a depositAmount in the body is ignored
+        var updated = await SendAsync<ReservationDto>(HttpMethod.Put, $"/api/Reservations/{created.Id}", guestToken, new
         {
             CheckInDate = checkIn,
             CheckOutDate = checkIn.AddDays(1),

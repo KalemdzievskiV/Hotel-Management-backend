@@ -20,14 +20,17 @@ public class WalkInController : ControllerBase
     private readonly IGuestService _guestService;
     private readonly ApplicationDbContext _context;
     private readonly IHotelAccessService _hotelAccess;
+    private readonly IWalkInService _walkInService;
 
     public WalkInController(
         IReservationService reservationService,
         IGuestService guestService,
         ApplicationDbContext context,
-        IHotelAccessService hotelAccess)
+        IHotelAccessService hotelAccess,
+        IWalkInService walkInService)
     {
         _hotelAccess = hotelAccess;
+        _walkInService = walkInService;
         _reservationService = reservationService;
         _guestService = guestService;
         _context = context;
@@ -115,88 +118,10 @@ public class WalkInController : ControllerBase
         if (dto.ExistingGuestId.HasValue && !await _hotelAccess.CanAccessGuestAsync(dto.ExistingGuestId.Value))
             return NotFound(new { message = "Guest not found" });
 
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-
-        // Resolve or create guest
-        int guestId;
-        if (dto.ExistingGuestId.HasValue)
-        {
-            guestId = dto.ExistingGuestId.Value;
-        }
-        else if (dto.NewGuest != null)
-        {
-            var existingByEmail = await _guestService.GetByEmailAsync(dto.NewGuest.Email);
-            if (existingByEmail != null)
-            {
-                guestId = existingByEmail.Id;
-            }
-            else
-            {
-                var newGuest = await _guestService.CreateAsync(new GuestDto
-                {
-                    FirstName = dto.NewGuest.FirstName,
-                    LastName = dto.NewGuest.LastName,
-                    Email = dto.NewGuest.Email,
-                    PhoneNumber = dto.NewGuest.PhoneNumber,
-                    IdentificationNumber = dto.NewGuest.IdentificationNumber,
-                    IdentificationType = dto.NewGuest.IdentificationType,
-                    Nationality = dto.NewGuest.Nationality,
-                    HotelId = dto.HotelId,
-                    CreatedByUserId = userId
-                });
-                guestId = newGuest.Id;
-            }
-        }
-        else
-        {
+        if (dto.ExistingGuestId == null && dto.NewGuest == null)
             return BadRequest(new { message = "Either ExistingGuestId or NewGuest must be provided" });
-        }
 
-        // Create reservation
-        var createDto = new CreateReservationDto
-        {
-            HotelId = dto.HotelId,
-            RoomId = dto.RoomId,
-            GuestId = guestId,
-            BookingType = dto.BookingType,
-            CheckInDate = dto.CheckInDate,
-            CheckOutDate = dto.CheckOutDate,
-            DurationInHours = dto.DurationInHours,
-            NumberOfGuests = dto.NumberOfGuests,
-            DepositAmount = dto.DepositAmount,
-            PaymentMethod = dto.PaymentMethod,
-            SpecialRequests = dto.SpecialRequests
-        };
-
-        var reservation = await _reservationService.CreateReservationAsync(createDto);
-
-        // Apply discount if provided
-        if (dto.DiscountAmount > 0 || dto.OverridePrice.HasValue)
-        {
-            var entity = await _context.Reservations.FindAsync(reservation.Id);
-            if (entity != null)
-            {
-                if (dto.DiscountAmount > 0)
-                {
-                    entity.DiscountAmount = dto.DiscountAmount;
-                    entity.DiscountReason = dto.DiscountReason;
-                    entity.TotalAmount = Math.Max(0, entity.TotalAmount - dto.DiscountAmount);
-                    entity.RemainingAmount = Math.Max(0, entity.TotalAmount - entity.DepositAmount);
-                }
-                else if (dto.OverridePrice.HasValue)
-                {
-                    entity.TotalAmount = dto.OverridePrice.Value;
-                    entity.RemainingAmount = Math.Max(0, dto.OverridePrice.Value - entity.DepositAmount);
-                }
-                await _context.SaveChangesAsync();
-            }
-        }
-
-        // Confirm then check-in immediately
-        reservation = await _reservationService.ConfirmReservationAsync(reservation.Id);
-        reservation = await _reservationService.CheckInReservationAsync(reservation.Id);
-
-        return Ok(reservation);
+        return Ok(await _walkInService.QuickCheckInAsync(dto));
     }
 
     [HttpPost("express-checkout/{reservationId}")]
@@ -211,28 +136,7 @@ public class WalkInController : ControllerBase
         if (entity.Status != ReservationStatus.CheckedIn)
             return BadRequest(new { message = "Reservation must be in CheckedIn status to check out" });
 
-        // Apply extra charges
-        if (dto.ExtraCharges > 0)
-        {
-            entity.ExtraCharges = dto.ExtraCharges;
-            entity.ExtraChargesNotes = dto.ExtraChargesNotes;
-            entity.TotalAmount += dto.ExtraCharges;
-            entity.RemainingAmount = Math.Max(0, entity.TotalAmount - entity.DepositAmount);
-            await _context.SaveChangesAsync();
-        }
-
-        // Record final payment if provided
-        if (dto.FinalPayment.HasValue && dto.FinalPayment > 0)
-        {
-            await _reservationService.RecordPaymentAsync(
-                reservationId,
-                dto.FinalPayment.Value,
-                dto.PaymentMethod ?? PaymentMethod.Cash);
-        }
-
-        // Check out
-        var result = await _reservationService.CheckOutReservationAsync(reservationId);
-        return Ok(result);
+        return Ok(await _walkInService.ExpressCheckOutAsync(reservationId, dto));
     }
 
     [HttpPatch("guest-flags/{guestId}")]

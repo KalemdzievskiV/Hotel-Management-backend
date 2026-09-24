@@ -21,9 +21,6 @@ public class UpdateReservationDto
     [Range(1, 20, ErrorMessage = "Number of guests must be between 1 and 20")]
     public int NumberOfGuests { get; set; } = 1;
     
-    [Range(0, 1000000, ErrorMessage = "Deposit amount must be between 0 and 1,000,000")]
-    public decimal DepositAmount { get; set; } = 0;
-    
     public PaymentMethod? PaymentMethod { get; set; }
     
     [MaxLength(100, ErrorMessage = "Payment reference cannot exceed 100 characters")]

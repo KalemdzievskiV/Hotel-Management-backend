@@ -56,6 +56,7 @@ namespace HotelManagement.Configurations
             services.AddScoped<IReportService, ReportService>();
             services.AddScoped<IInventoryService, InventoryService>();
             services.AddScoped<IHousekeepingService, HousekeepingService>();
+            services.AddScoped<IWalkInService, WalkInService>();
 
             // 4️⃣ AutoMapper
             services.AddAutoMapper(typeof(AutoMapperProfile));
