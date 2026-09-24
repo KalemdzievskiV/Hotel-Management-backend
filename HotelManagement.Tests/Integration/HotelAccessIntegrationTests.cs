@@ -133,12 +133,13 @@ public class HotelAccessIntegrationTests : IClassFixture<CustomWebApplicationFac
     }
 
     [Fact]
-    public async Task Guest_CannotBookForAnotherGuest_OrTouchOthersReservations()
+    public async Task Guest_BookingForAnotherGuest_IsBookedUnderTheirOwnProfile()
     {
         var hotelA = await CreateHotelWithReservationAsync();
         var guestToken = await TestAuth.GetTokenAsync(_client, "Guest");
+        var myProfile = await SendAsync<GuestDto>(HttpMethod.Get, "/api/Guests/me", guestToken);
 
-        var booking = new CreateReservationDto
+        var created = await SendAsync<ReservationDto>(HttpMethod.Post, "/api/Reservations", guestToken, new CreateReservationDto
         {
             HotelId = hotelA.HotelId,
             RoomId = hotelA.RoomId,
@@ -146,9 +147,16 @@ public class HotelAccessIntegrationTests : IClassFixture<CustomWebApplicationFac
             CheckInDate = DateTime.UtcNow.Date.AddDays(30),
             CheckOutDate = DateTime.UtcNow.Date.AddDays(31),
             NumberOfGuests = 1
-        };
-        (await SendRawAsync(HttpMethod.Post, "/api/Reservations", guestToken, booking))
-            .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        });
+
+        created.GuestId.Should().Be(myProfile.Id);
+    }
+
+    [Fact]
+    public async Task Guest_CannotSeeOrCancelOthersReservations()
+    {
+        var hotelA = await CreateHotelWithReservationAsync();
+        var guestToken = await TestAuth.GetTokenAsync(_client, "Guest");
 
         (await SendRawAsync(HttpMethod.Get, $"/api/Reservations/{hotelA.ReservationId}", guestToken))
             .StatusCode.Should().Be(HttpStatusCode.Forbidden);

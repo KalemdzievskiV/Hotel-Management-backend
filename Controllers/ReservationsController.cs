@@ -56,7 +56,8 @@ public class ReservationsController : ControllerBase
     }
 
     /// <summary>
-    /// Create a new reservation. Guests can only book for themselves; staff only at their hotels.
+    /// Create a new reservation. A guest's booking is always for their own guest profile
+    /// (whatever GuestId was sent); staff can only book at their hotels.
     /// </summary>
     [HttpPost]
     [Authorize(Roles = $"{ManagementRoles},{AppRoles.Guest}")]
@@ -64,9 +65,8 @@ public class ReservationsController : ControllerBase
     {
         if (User.IsInRole(AppRoles.Guest))
         {
-            var myProfile = await _guestService.GetByUserIdAsync(CurrentUserId!);
-            if (myProfile == null || myProfile.Id != createDto.GuestId)
-                return Forbid();
+            var myProfile = await _guestService.GetOrCreateGuestProfileAsync(CurrentUserId!);
+            createDto.GuestId = myProfile.Id;
 
             // Only staff can record money received; a guest's booking starts unpaid
             createDto.DepositAmount = 0;

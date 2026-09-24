@@ -198,11 +198,15 @@ public class HousekeepingService : IHousekeepingService
     {
         var day = date.Date;
 
-        // Find rooms that had checkouts today
+        var nextDay = day.AddDays(1);
+
+        // Rooms whose guest leaves this day: scheduled departures of guests who stayed, plus
+        // guests who actually checked out this day (including early departures)
         var checkoutRoomIds = await _context.Reservations
-            .Where(r => r.HotelId == hotelId
-                && r.CheckOutDate.Date == day
-                && (r.Status == ReservationStatus.CheckedOut || r.Status == ReservationStatus.Confirmed))
+            .Where(r => r.HotelId == hotelId &&
+                ((r.CheckOutDate >= day && r.CheckOutDate < nextDay &&
+                  (r.Status == ReservationStatus.CheckedIn || r.Status == ReservationStatus.CheckedOut)) ||
+                 (r.CheckedOutAt >= day && r.CheckedOutAt < nextDay)))
             .Select(r => r.RoomId)
             .Distinct()
             .ToListAsync();
