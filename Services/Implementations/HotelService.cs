@@ -1,6 +1,7 @@
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
 using HotelManagement.Data;
+using HotelManagement.Infrastructure.Exceptions;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Repositories.Interfaces;
@@ -117,7 +118,7 @@ public class HotelService : CrudService<Hotel, HotelDto>, IHotelService
             if (ex.InnerException?.Message.Contains("FK_") == true || 
                 ex.InnerException?.Message.Contains("REFERENCE constraint") == true)
             {
-                throw new InvalidOperationException(
+                throw new BusinessRuleException(
                     "Cannot delete this hotel because it has related data (rooms, guests, or reservations). " +
                     "Please remove all associated data before deleting the hotel.");
             }

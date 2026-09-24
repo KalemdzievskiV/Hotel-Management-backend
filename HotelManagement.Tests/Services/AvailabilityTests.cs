@@ -1,5 +1,6 @@
 using AutoMapper;
 using HotelManagement.Data;
+using HotelManagement.Infrastructure.Exceptions;
 using HotelManagement.Infrastructure.Mapping;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
@@ -131,7 +132,7 @@ public class AvailabilityTests
         };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _service.CreateReservationAsync(createDto));
         Assert.Contains("Earliest check-in", exception.Message);
         Assert.Contains("3h cleaning buffer", exception.Message);
@@ -220,7 +221,7 @@ public class AvailabilityTests
         };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _service.CreateReservationAsync(createDto));
         Assert.Contains("booked overnight", exception.Message);
     }
@@ -264,7 +265,7 @@ public class AvailabilityTests
         };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _service.CreateReservationAsync(createDto));
         Assert.Contains("short-stay booking", exception.Message);
     }
@@ -354,7 +355,7 @@ public class AvailabilityTests
         };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _service.CreateReservationAsync(createDto));
         Assert.Contains("Overlaps with short-stay booking", exception.Message);
     }
@@ -516,7 +517,7 @@ public class AvailabilityTests
         };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _service.CreateReservationAsync(createDto));
         
         // Verify error message contains useful info

@@ -1,6 +1,7 @@
 using AutoMapper;
 using FluentAssertions;
 using HotelManagement.Data;
+using HotelManagement.Infrastructure.Exceptions;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Repositories.Interfaces;
@@ -96,7 +97,7 @@ public class GuestServiceTests
             .ReturnsAsync(existingGuests);
 
         // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<BusinessRuleException>(async () =>
         {
             await _service.CreateAsync(dto);
         });
@@ -205,7 +206,7 @@ public class GuestServiceTests
             .ReturnsAsync(new List<Guest> { conflictingGuest });
 
         // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<BusinessRuleException>(async () =>
         {
             await _service.UpdateAsync(1, dto);
         });

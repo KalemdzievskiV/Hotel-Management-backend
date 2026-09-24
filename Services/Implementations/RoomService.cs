@@ -1,5 +1,6 @@
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
+using HotelManagement.Infrastructure.Exceptions;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Models.Enums;
@@ -47,7 +48,7 @@ public class RoomService : CrudService<Room, RoomDto>, IRoomService
         var isUnique = await IsRoomNumberUniqueAsync(dto.HotelId, dto.RoomNumber);
         if (!isUnique)
         {
-            throw new InvalidOperationException($"Room number '{dto.RoomNumber}' already exists in this hotel");
+            throw new BusinessRuleException($"Room number '{dto.RoomNumber}' already exists in this hotel");
         }
 
         var room = _mapper.Map<Room>(dto);
@@ -71,7 +72,7 @@ public class RoomService : CrudService<Room, RoomDto>, IRoomService
             var isUnique = await IsRoomNumberUniqueAsync(dto.HotelId, dto.RoomNumber, id);
             if (!isUnique)
             {
-                throw new InvalidOperationException($"Room number '{dto.RoomNumber}' already exists in this hotel");
+                throw new BusinessRuleException($"Room number '{dto.RoomNumber}' already exists in this hotel");
             }
         }
 

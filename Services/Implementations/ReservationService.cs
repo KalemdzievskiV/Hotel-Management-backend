@@ -1,5 +1,6 @@
 using AutoMapper;
 using HotelManagement.Data;
+using HotelManagement.Infrastructure.Exceptions;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Models.Enums;
@@ -79,27 +80,27 @@ public class ReservationService : IReservationService
             var hotel = await _context.Hotels.FindAsync(createDto.HotelId)
                 ?? throw new KeyNotFoundException($"Hotel with ID {createDto.HotelId} not found");
             if (!hotel.IsActive)
-                throw new InvalidOperationException($"{hotel.Name} is not accepting bookings");
+                throw new BusinessRuleException($"{hotel.Name} is not accepting bookings");
 
             await LockRoomAsync(createDto.RoomId);
             var room = await _context.Rooms.FirstOrDefaultAsync(r => r.Id == createDto.RoomId)
                 ?? throw new KeyNotFoundException($"Room with ID {createDto.RoomId} not found");
             if (room.HotelId != createDto.HotelId)
-                throw new InvalidOperationException($"Room {createDto.RoomId} does not belong to hotel {createDto.HotelId}");
+                throw new BusinessRuleException($"Room {createDto.RoomId} does not belong to hotel {createDto.HotelId}");
             if (!room.IsActive || room.Status == RoomStatus.OutOfService)
-                throw new InvalidOperationException($"Room {room.RoomNumber} is not available for booking");
+                throw new BusinessRuleException($"Room {room.RoomNumber} is not available for booking");
 
             var guest = await _context.Guests.FindAsync(createDto.GuestId)
                 ?? throw new KeyNotFoundException($"Guest with ID {createDto.GuestId} not found");
             if (guest.IsBlacklisted)
-                throw new InvalidOperationException($"{guest.FirstName} {guest.LastName} is blacklisted and cannot be booked");
+                throw new BusinessRuleException($"{guest.FirstName} {guest.LastName} is blacklisted and cannot be booked");
 
             var durationInHours = ValidateStay(room, createDto.CheckInDate, createDto.CheckOutDate, createDto.BookingType, createDto.NumberOfGuests);
             await EnsureAvailableAsync(room, hotel, createDto.CheckInDate, createDto.CheckOutDate, createDto.BookingType);
 
             var totalAmount = CalculateRoomPrice(room, createDto.CheckInDate, createDto.CheckOutDate, createDto.BookingType);
             if (createDto.DepositAmount > totalAmount)
-                throw new InvalidOperationException($"Deposit ({createDto.DepositAmount:0.00}) cannot exceed the total ({totalAmount:0.00})");
+                throw new BusinessRuleException($"Deposit ({createDto.DepositAmount:0.00}) cannot exceed the total ({totalAmount:0.00})");
 
             var reservation = new Reservation
             {
@@ -165,7 +166,7 @@ public class ReservationService : IReservationService
             }
 
             if (reservation.Status == ReservationStatus.CheckedIn && updateDto.CheckInDate != reservation.CheckInDate)
-                throw new InvalidOperationException("The guest has already checked in; only the check-out can be changed");
+                throw new BusinessRuleException("The guest has already checked in; only the check-out can be changed");
 
             var datesChanged = reservation.CheckInDate != updateDto.CheckInDate || reservation.CheckOutDate != updateDto.CheckOutDate;
             if (datesChanged)
@@ -209,10 +210,10 @@ public class ReservationService : IReservationService
             ?? throw new KeyNotFoundException($"Reservation with ID {id} not found");
 
         if (reservation.Status != ReservationStatus.Pending)
-            throw new InvalidOperationException("Only pending reservations can be deleted; cancel this reservation instead");
+            throw new BusinessRuleException("Only pending reservations can be deleted; cancel this reservation instead");
 
         if (reservation.Payments.Count > 0)
-            throw new InvalidOperationException("This reservation has payments recorded; cancel it and refund instead of deleting");
+            throw new BusinessRuleException("This reservation has payments recorded; cancel it and refund instead of deleting");
 
         _context.Reservations.Remove(reservation);
         await _context.SaveChangesAsync();
@@ -231,28 +232,28 @@ public class ReservationService : IReservationService
     private static int? ValidateStay(Room room, DateTime checkIn, DateTime checkOut, BookingType bookingType, int numberOfGuests)
     {
         if (numberOfGuests > room.Capacity)
-            throw new InvalidOperationException($"Room capacity is {room.Capacity} guests, but {numberOfGuests} guests requested");
+            throw new BusinessRuleException($"Room capacity is {room.Capacity} guests, but {numberOfGuests} guests requested");
 
         if (bookingType == BookingType.Daily)
         {
             if (checkOut.Date <= checkIn.Date)
-                throw new InvalidOperationException("Check-out date must be after check-in date for overnight stays");
+                throw new BusinessRuleException("Check-out date must be after check-in date for overnight stays");
             return null;
         }
 
         if (!room.AllowsShortStay)
-            throw new InvalidOperationException($"Room {room.RoomNumber} does not support short-stay bookings");
+            throw new BusinessRuleException($"Room {room.RoomNumber} does not support short-stay bookings");
 
         if (checkOut <= checkIn)
-            throw new InvalidOperationException("Check-out time must be after check-in time");
+            throw new BusinessRuleException("Check-out time must be after check-in time");
 
         var hours = (int)Math.Ceiling((checkOut - checkIn).TotalHours);
 
         if (room.MinimumShortStayHours.HasValue && hours < room.MinimumShortStayHours.Value)
-            throw new InvalidOperationException($"Minimum stay for this room is {room.MinimumShortStayHours} hours");
+            throw new BusinessRuleException($"Minimum stay for this room is {room.MinimumShortStayHours} hours");
 
         if (room.MaximumShortStayHours.HasValue && hours > room.MaximumShortStayHours.Value)
-            throw new InvalidOperationException($"Maximum stay for this room is {room.MaximumShortStayHours} hours");
+            throw new BusinessRuleException($"Maximum stay for this room is {room.MaximumShortStayHours} hours");
 
         return hours;
     }
@@ -320,7 +321,7 @@ public class ReservationService : IReservationService
 
         var conflict = StayAvailability.FindConflict(checkIn, checkOut, bookingType, hotel, existing);
         if (conflict != null)
-            throw new InvalidOperationException($"Room {room.RoomNumber} is not available for the selected dates. {conflict}");
+            throw new BusinessRuleException($"Room {room.RoomNumber} is not available for the selected dates. {conflict}");
     }
 
     public async Task<bool> IsRoomAvailableAsync(int roomId, DateTime checkIn, DateTime checkOut, int? excludeReservationId = null)
@@ -512,7 +513,7 @@ public class ReservationService : IReservationService
         var reservation = await LoadForChangeAsync(id);
 
         if (reservation.Status != ReservationStatus.Pending)
-            throw new InvalidOperationException("Only pending reservations can be confirmed");
+            throw new BusinessRuleException("Only pending reservations can be confirmed");
 
         reservation.Status = ReservationStatus.Confirmed;
         reservation.ConfirmedAt = DateTime.UtcNow;
@@ -524,10 +525,10 @@ public class ReservationService : IReservationService
         var reservation = await LoadForChangeAsync(id);
 
         if (reservation.Status != ReservationStatus.Confirmed)
-            throw new InvalidOperationException("Only confirmed reservations can be checked in");
+            throw new BusinessRuleException("Only confirmed reservations can be checked in");
 
         if (reservation.Room.Status is RoomStatus.Occupied or RoomStatus.Maintenance or RoomStatus.OutOfService)
-            throw new InvalidOperationException($"Room {reservation.Room.RoomNumber} is {reservation.Room.Status} and can't take a guest right now");
+            throw new BusinessRuleException($"Room {reservation.Room.RoomNumber} is {reservation.Room.Status} and can't take a guest right now");
 
         reservation.Status = ReservationStatus.CheckedIn;
         reservation.CheckedInAt = DateTime.UtcNow;
@@ -541,7 +542,7 @@ public class ReservationService : IReservationService
         var reservation = await LoadForChangeAsync(id);
 
         if (reservation.Status != ReservationStatus.CheckedIn)
-            throw new InvalidOperationException("Only checked-in reservations can be checked out");
+            throw new BusinessRuleException("Only checked-in reservations can be checked out");
 
         var now = DateTime.UtcNow;
         reservation.Status = ReservationStatus.CheckedOut;
@@ -557,7 +558,7 @@ public class ReservationService : IReservationService
         var reservation = await LoadForChangeAsync(id);
 
         if (!reservation.CanCancel)
-            throw new InvalidOperationException($"Reservation with status {reservation.Status} cannot be cancelled");
+            throw new BusinessRuleException($"Reservation with status {reservation.Status} cannot be cancelled");
 
         reservation.Status = ReservationStatus.Cancelled;
         reservation.CancelledAt = DateTime.UtcNow;
@@ -571,7 +572,7 @@ public class ReservationService : IReservationService
         var reservation = await LoadForChangeAsync(id);
 
         if (reservation.Status != ReservationStatus.Confirmed)
-            throw new InvalidOperationException("Only confirmed reservations can be marked as no-show");
+            throw new BusinessRuleException("Only confirmed reservations can be marked as no-show");
 
         reservation.Status = ReservationStatus.NoShow;
         return await SaveAndReloadAsync(reservation);
@@ -586,13 +587,13 @@ public class ReservationService : IReservationService
         var reservation = await LoadForChangeAsync(id);
 
         if (amount <= 0)
-            throw new InvalidOperationException("Payment amount must be greater than 0");
+            throw new BusinessRuleException("Payment amount must be greater than 0");
 
         if (reservation.Status == ReservationStatus.Cancelled)
-            throw new InvalidOperationException("Cannot take payments on a cancelled reservation");
+            throw new BusinessRuleException("Cannot take payments on a cancelled reservation");
 
         if (amount > reservation.RemainingAmount)
-            throw new InvalidOperationException($"Payment amount exceeds remaining balance ({reservation.RemainingAmount:0.00})");
+            throw new BusinessRuleException($"Payment amount exceeds remaining balance ({reservation.RemainingAmount:0.00})");
 
         reservation.Payments.Add(new Payment
         {
@@ -613,10 +614,10 @@ public class ReservationService : IReservationService
         var reservation = await LoadForChangeAsync(id);
 
         if (amount <= 0)
-            throw new InvalidOperationException("Refund amount must be greater than 0");
+            throw new BusinessRuleException("Refund amount must be greater than 0");
 
         if (amount > reservation.DepositAmount)
-            throw new InvalidOperationException($"Refund amount cannot exceed the amount paid ({reservation.DepositAmount:0.00})");
+            throw new BusinessRuleException($"Refund amount cannot exceed the amount paid ({reservation.DepositAmount:0.00})");
 
         reservation.Payments.Add(new Payment
         {
@@ -635,28 +636,28 @@ public class ReservationService : IReservationService
         var reservation = await LoadForChangeAsync(id);
 
         if (!IsOpen(reservation.Status))
-            throw new InvalidOperationException("Prices can only be adjusted on open reservations");
+            throw new BusinessRuleException("Prices can only be adjusted on open reservations");
 
         var roomPrice = CalculateRoomPrice(reservation.Room, reservation.CheckInDate, reservation.CheckOutDate, reservation.BookingType);
 
         if (overridePrice.HasValue)
         {
             if (overridePrice.Value < 0 || overridePrice.Value > roomPrice)
-                throw new InvalidOperationException($"Override price must be between 0 and the room price ({roomPrice:0.00})");
+                throw new BusinessRuleException($"Override price must be between 0 and the room price ({roomPrice:0.00})");
             // Stored as a discount so the room price and the markdown both stay visible
             discountAmount = roomPrice - overridePrice.Value;
             reason ??= $"Price override to {overridePrice.Value:0.00}";
         }
 
         if (discountAmount < 0 || discountAmount > roomPrice)
-            throw new InvalidOperationException($"Discount must be between 0 and the room price ({roomPrice:0.00})");
+            throw new BusinessRuleException($"Discount must be between 0 and the room price ({roomPrice:0.00})");
 
         reservation.DiscountAmount = discountAmount;
         reservation.DiscountReason = reason;
         reservation.TotalAmount = roomPrice - discountAmount + reservation.ExtraCharges;
 
         if (reservation.DepositAmount > reservation.TotalAmount)
-            throw new InvalidOperationException("The new total is below what has already been paid; refund the difference first");
+            throw new BusinessRuleException("The new total is below what has already been paid; refund the difference first");
 
         RecalculateBalance(reservation);
         return await SaveAndReloadAsync(reservation);
@@ -667,10 +668,10 @@ public class ReservationService : IReservationService
         var reservation = await LoadForChangeAsync(id);
 
         if (amount <= 0)
-            throw new InvalidOperationException("Extra charges must be greater than 0");
+            throw new BusinessRuleException("Extra charges must be greater than 0");
 
         if (reservation.Status != ReservationStatus.CheckedIn)
-            throw new InvalidOperationException("Extra charges can only be added while the guest is checked in");
+            throw new BusinessRuleException("Extra charges can only be added while the guest is checked in");
 
         reservation.ExtraCharges += amount;
         reservation.ExtraChargesNotes = string.IsNullOrWhiteSpace(reservation.ExtraChargesNotes)

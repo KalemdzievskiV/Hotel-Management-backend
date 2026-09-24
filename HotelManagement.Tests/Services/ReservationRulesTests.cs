@@ -1,5 +1,6 @@
 using AutoMapper;
 using HotelManagement.Data;
+using HotelManagement.Infrastructure.Exceptions;
 using HotelManagement.Infrastructure.Mapping;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
@@ -93,7 +94,7 @@ public class ReservationRulesTests
     {
         await BookNightsAsync(1, _day, 2);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => BookNightsAsync(2, _day.AddDays(1), 2));
+        await Assert.ThrowsAsync<BusinessRuleException>(() => BookNightsAsync(2, _day.AddDays(1), 2));
     }
 
     [Fact]
@@ -102,7 +103,7 @@ public class ReservationRulesTests
         // Previously missed: the overnight guest is still in the room until 11:00
         await BookNightsAsync(1, _day, 1);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateReservationAsync(new CreateReservationDto
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => _service.CreateReservationAsync(new CreateReservationDto
         {
             HotelId = 1, RoomId = 1, GuestId = 2, BookingType = BookingType.ShortStay,
             CheckInDate = _day.AddDays(1).AddHours(8), CheckOutDate = _day.AddDays(1).AddHours(10),
@@ -145,14 +146,14 @@ public class ReservationRulesTests
     [Fact]
     public async Task BlacklistedGuest_CannotBeBooked()
     {
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => BookNightsAsync(3, _day, 1));
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => BookNightsAsync(3, _day, 1));
         Assert.Contains("blacklisted", ex.Message);
     }
 
     [Fact]
     public async Task DepositAboveTotal_IsRejected()
     {
-        await Assert.ThrowsAsync<InvalidOperationException>(() => BookNightsAsync(1, _day, 1, deposit: 150));
+        await Assert.ThrowsAsync<BusinessRuleException>(() => BookNightsAsync(1, _day, 1, deposit: 150));
     }
 
     [Fact]
@@ -160,7 +161,7 @@ public class ReservationRulesTests
     {
         var booking = await BookNightsAsync(1, _day, 1);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => _service.UpdateReservationAsync(booking.Id, new UpdateReservationDto
+        await Assert.ThrowsAsync<BusinessRuleException>(() => _service.UpdateReservationAsync(booking.Id, new UpdateReservationDto
         {
             CheckInDate = booking.CheckInDate, CheckOutDate = booking.CheckOutDate, NumberOfGuests = 5
         }));
@@ -217,7 +218,7 @@ public class ReservationRulesTests
     {
         var booking = await BookNightsAsync(1, _day, 2, deposit: 180);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<BusinessRuleException>(() =>
             _service.ApplyPriceAdjustmentAsync(booking.Id, 50, "Loyalty", null));
     }
 
@@ -233,7 +234,7 @@ public class ReservationRulesTests
         (await _context.Rooms.FindAsync(1))!.Status = RoomStatus.Occupied;
         await _context.SaveChangesAsync();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CheckInReservationAsync(booking.Id));
+        await Assert.ThrowsAsync<BusinessRuleException>(() => _service.CheckInReservationAsync(booking.Id));
     }
 
     [Fact]
@@ -253,7 +254,7 @@ public class ReservationRulesTests
     {
         var booking = await BookNightsAsync(1, _day, 1, deposit: 20);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => _service.DeleteReservationAsync(booking.Id));
+        await Assert.ThrowsAsync<BusinessRuleException>(() => _service.DeleteReservationAsync(booking.Id));
     }
 
     #endregion

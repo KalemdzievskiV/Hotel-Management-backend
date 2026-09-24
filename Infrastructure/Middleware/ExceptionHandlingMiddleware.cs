@@ -1,9 +1,14 @@
 using System.Net;
 using System.Text.Json;
+using HotelManagement.Infrastructure.Exceptions;
 using HotelManagement.Models;
 
 namespace HotelManagement.Infrastructure.Middleware;
 
+/// <summary>
+/// Turns exceptions into consistent ApiResponse errors. Expected failures (broken business rules,
+/// bad input, missing records) keep their message; anything else is a bug and returns a generic 500.
+/// </summary>
 public class ExceptionHandlingMiddleware
 {
     private readonly RequestDelegate _next;
@@ -25,7 +30,6 @@ public class ExceptionHandlingMiddleware
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "An unhandled exception occurred: {Message}", ex.Message);
             await HandleExceptionAsync(context, ex);
         }
     }
@@ -34,27 +38,29 @@ public class ExceptionHandlingMiddleware
     {
         var statusCode = exception switch
         {
-            ArgumentNullException => HttpStatusCode.BadRequest,
+            BusinessRuleException => HttpStatusCode.BadRequest,
             ArgumentException => HttpStatusCode.BadRequest,
-            InvalidOperationException => HttpStatusCode.BadRequest,
-            UnauthorizedAccessException => HttpStatusCode.Unauthorized,
             KeyNotFoundException => HttpStatusCode.NotFound,
+            UnauthorizedAccessException => HttpStatusCode.Unauthorized,
             _ => HttpStatusCode.InternalServerError
         };
 
-        var isDevelopment = _environment.IsDevelopment();
-        
-        var errors = new List<string>();
-        if (isDevelopment && exception.StackTrace != null)
-        {
-            errors.Add(exception.StackTrace);
-        }
+        var isUnexpected = statusCode == HttpStatusCode.InternalServerError;
+        if (isUnexpected)
+            _logger.LogError(exception, "Unhandled exception: {Message}", exception.Message);
+        else
+            _logger.LogWarning("Request failed ({StatusCode}): {Message}", (int)statusCode, exception.Message);
 
-        var response = ApiResponse<object>.ErrorResponse(
-            message: isDevelopment ? exception.Message : "An error occurred processing your request.",
-            errors: errors.Any() ? errors : null,
-            statusCode: (int)statusCode
-        );
+        // Expected failures carry a user-facing message; for bugs only show details in development
+        var isDevelopment = _environment.IsDevelopment();
+        var message = !isUnexpected || isDevelopment
+            ? exception.Message
+            : "An error occurred processing your request.";
+        var errors = isUnexpected && isDevelopment && exception.StackTrace != null
+            ? new List<string> { exception.StackTrace }
+            : null;
+
+        var response = ApiResponse<object>.ErrorResponse(message, errors, (int)statusCode);
 
         context.Response.ContentType = "application/json";
         context.Response.StatusCode = (int)statusCode;

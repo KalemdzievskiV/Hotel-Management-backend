@@ -29,7 +29,7 @@ if (!string.IsNullOrEmpty(databaseUrl))
 }
 
 // Add services to the container.
-builder.Services.AddControllersWithViews(options =>
+builder.Services.AddControllers(options =>
 {
     // Add global validation filter for consistent error responses
     options.Filters.Add<ValidationFilter>();
@@ -132,9 +132,7 @@ else
     app.UseHsts();
 }
 
-//app.UseHttpsRedirection();
 app.UseRouting();
-app.UseStaticFiles();
 
 // Enable CORS
 app.UseCors("AllowFrontend");
@@ -142,10 +140,11 @@ app.UseCors("AllowFrontend");
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapStaticAssets();
-
-// 3️⃣ Map API controllers
 app.MapControllers();
+
+// The API has no UI of its own; in development the root opens the API docs
+if (app.Environment.IsDevelopment())
+    app.MapGet("/", () => Results.Redirect("/swagger"));
 
 // Health check endpoint for Railway
 app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));

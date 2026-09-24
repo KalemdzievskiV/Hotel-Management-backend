@@ -40,13 +40,6 @@ namespace HotelManagement.Configurations
             services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
 
             // 4️⃣ Services
-            services.AddScoped<ICrudService<HotelDto>>(sp =>
-            {
-                var repo = sp.GetRequiredService<IGenericRepository<Hotel>>();
-                var mapper = sp.GetRequiredService<IMapper>();
-                return new CrudService<Hotel, HotelDto>(repo, mapper);
-            });
-
             services.AddScoped<IHotelAccessService, HotelAccessService>();
             services.AddScoped<IHotelService, HotelService>();
             services.AddScoped<IRoomService, RoomService>();

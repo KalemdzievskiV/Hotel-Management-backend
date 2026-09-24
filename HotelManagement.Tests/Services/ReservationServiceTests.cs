@@ -1,5 +1,6 @@
 using AutoMapper;
 using HotelManagement.Data;
+using HotelManagement.Infrastructure.Exceptions;
 using HotelManagement.Infrastructure.Mapping;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
@@ -171,7 +172,7 @@ public class ReservationServiceTests
         };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _service.CreateReservationAsync(createDto));
         Assert.Contains("does not support short-stay", exception.Message);
     }
@@ -193,7 +194,7 @@ public class ReservationServiceTests
         };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _service.CreateReservationAsync(createDto));
         Assert.Contains("Check-out date must be after check-in date for overnight stays", exception.Message);
     }
@@ -243,7 +244,7 @@ public class ReservationServiceTests
         };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _service.CreateReservationAsync(createDto));
         Assert.Contains("Room capacity", exception.Message);
     }
@@ -268,7 +269,7 @@ public class ReservationServiceTests
         };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _service.CreateReservationAsync(createDto));
         Assert.Contains("Minimum stay", exception.Message);
     }
@@ -293,7 +294,7 @@ public class ReservationServiceTests
         };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _service.CreateReservationAsync(createDto));
         Assert.Contains("Maximum stay", exception.Message);
     }
@@ -436,7 +437,7 @@ public class ReservationServiceTests
         await _context.SaveChangesAsync();
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _service.ConfirmReservationAsync(reservation.Id));
         Assert.Contains("Only pending reservations can be confirmed", exception.Message);
     }
@@ -606,7 +607,7 @@ public class ReservationServiceTests
         await _context.SaveChangesAsync();
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _service.RecordPaymentAsync(reservation.Id, 250, PaymentMethod.Cash)); // 250 > 200 remaining
         Assert.Contains("exceeds remaining balance", exception.Message);
     }
@@ -711,7 +712,7 @@ public class ReservationServiceTests
         await _context.SaveChangesAsync();
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _service.DeleteReservationAsync(reservation.Id));
         Assert.Contains("Only pending reservations can be deleted", exception.Message);
     }

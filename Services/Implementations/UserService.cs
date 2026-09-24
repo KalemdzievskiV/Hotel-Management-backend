@@ -1,3 +1,4 @@
+using HotelManagement.Infrastructure.Exceptions;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using Microsoft.AspNetCore.Identity;
@@ -21,11 +22,11 @@ public class UserService : Services.Interfaces.IUserService
         // Check if user already exists
         var existingUser = await _userManager.FindByEmailAsync(createDto.Email);
         if (existingUser != null)
-            throw new InvalidOperationException($"A user with email '{createDto.Email}' already exists");
+            throw new BusinessRuleException($"A user with email '{createDto.Email}' already exists");
 
         // Ensure role exists
         if (!await _roleManager.RoleExistsAsync(createDto.Role))
-            throw new InvalidOperationException($"Role '{createDto.Role}' does not exist");
+            throw new BusinessRuleException($"Role '{createDto.Role}' does not exist");
 
         // Create new user
         var user = new ApplicationUser
@@ -59,7 +60,7 @@ public class UserService : Services.Interfaces.IUserService
 
         var result = await _userManager.CreateAsync(user, createDto.Password);
         if (!result.Succeeded)
-            throw new InvalidOperationException($"Failed to create user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+            throw new BusinessRuleException($"Failed to create user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
 
         // Assign role
         var roleResult = await _userManager.AddToRoleAsync(user, createDto.Role);
@@ -67,7 +68,7 @@ public class UserService : Services.Interfaces.IUserService
         {
             // Rollback user creation if role assignment fails
             await _userManager.DeleteAsync(user);
-            throw new InvalidOperationException($"Failed to assign role: {string.Join(", ", roleResult.Errors.Select(e => e.Description))}");
+            throw new BusinessRuleException($"Failed to assign role: {string.Join(", ", roleResult.Errors.Select(e => e.Description))}");
         }
 
         return await GetUserByIdAsync(user.Id) ?? throw new InvalidOperationException("User not found after creation");
@@ -204,7 +205,7 @@ public class UserService : Services.Interfaces.IUserService
 
         var result = await _userManager.UpdateAsync(user);
         if (!result.Succeeded)
-            throw new InvalidOperationException($"Failed to update user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+            throw new BusinessRuleException($"Failed to update user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
 
         return await GetUserByIdAsync(userId) ?? throw new InvalidOperationException("User not found after update");
     }
@@ -220,7 +221,7 @@ public class UserService : Services.Interfaces.IUserService
 
         var result = await _userManager.UpdateAsync(user);
         if (!result.Succeeded)
-            throw new InvalidOperationException($"Failed to activate user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+            throw new BusinessRuleException($"Failed to activate user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
     }
 
     public async Task DeactivateUserAsync(string userId)
@@ -235,7 +236,7 @@ public class UserService : Services.Interfaces.IUserService
 
         var result = await _userManager.UpdateAsync(user);
         if (!result.Succeeded)
-            throw new InvalidOperationException($"Failed to deactivate user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+            throw new BusinessRuleException($"Failed to deactivate user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
     }
 
     public async Task DeleteUserAsync(string userId)
@@ -248,7 +249,7 @@ public class UserService : Services.Interfaces.IUserService
         {
             var result = await _userManager.DeleteAsync(user);
             if (!result.Succeeded)
-                throw new InvalidOperationException($"Failed to delete user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+                throw new BusinessRuleException($"Failed to delete user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
         }
         catch (DbUpdateException ex)
         {
@@ -256,7 +257,7 @@ public class UserService : Services.Interfaces.IUserService
             if (ex.InnerException?.Message.Contains("FK_") == true || 
                 ex.InnerException?.Message.Contains("REFERENCE constraint") == true)
             {
-                throw new InvalidOperationException(
+                throw new BusinessRuleException(
                     "Cannot delete this user because they own hotels or have related data. " +
                     "Please reassign or remove their hotels before deleting the user.");
             }
@@ -276,7 +277,7 @@ public class UserService : Services.Interfaces.IUserService
 
         var result = await _userManager.UpdateAsync(user);
         if (!result.Succeeded)
-            throw new InvalidOperationException($"Failed to assign user to hotel: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+            throw new BusinessRuleException($"Failed to assign user to hotel: {string.Join(", ", result.Errors.Select(e => e.Description))}");
     }
 
     public async Task UpdateUserRoleAsync(string userId, string newRole)
@@ -287,18 +288,18 @@ public class UserService : Services.Interfaces.IUserService
 
         // Ensure role exists
         if (!await _roleManager.RoleExistsAsync(newRole))
-            throw new InvalidOperationException($"Role '{newRole}' does not exist");
+            throw new BusinessRuleException($"Role '{newRole}' does not exist");
 
         // Remove all existing roles
         var currentRoles = await _userManager.GetRolesAsync(user);
         var removeResult = await _userManager.RemoveFromRolesAsync(user, currentRoles);
         if (!removeResult.Succeeded)
-            throw new InvalidOperationException($"Failed to remove existing roles: {string.Join(", ", removeResult.Errors.Select(e => e.Description))}");
+            throw new BusinessRuleException($"Failed to remove existing roles: {string.Join(", ", removeResult.Errors.Select(e => e.Description))}");
 
         // Add new role
         var addResult = await _userManager.AddToRoleAsync(user, newRole);
         if (!addResult.Succeeded)
-            throw new InvalidOperationException($"Failed to add new role: {string.Join(", ", addResult.Errors.Select(e => e.Description))}");
+            throw new BusinessRuleException($"Failed to add new role: {string.Join(", ", addResult.Errors.Select(e => e.Description))}");
 
         // Tokens carry roles, so end existing sessions to apply the change immediately
         await _userManager.UpdateSecurityStampAsync(user);
@@ -312,11 +313,11 @@ public class UserService : Services.Interfaces.IUserService
 
         // Ensure role exists
         if (!await _roleManager.RoleExistsAsync(role))
-            throw new InvalidOperationException($"Role '{role}' does not exist");
+            throw new BusinessRuleException($"Role '{role}' does not exist");
 
         var result = await _userManager.AddToRoleAsync(user, role);
         if (!result.Succeeded)
-            throw new InvalidOperationException($"Failed to add role: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+            throw new BusinessRuleException($"Failed to add role: {string.Join(", ", result.Errors.Select(e => e.Description))}");
 
         // Tokens carry roles, so end existing sessions to apply the change immediately
         await _userManager.UpdateSecurityStampAsync(user);
@@ -330,7 +331,7 @@ public class UserService : Services.Interfaces.IUserService
 
         var result = await _userManager.RemoveFromRoleAsync(user, role);
         if (!result.Succeeded)
-            throw new InvalidOperationException($"Failed to remove role: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+            throw new BusinessRuleException($"Failed to remove role: {string.Join(", ", result.Errors.Select(e => e.Description))}");
 
         // Tokens carry roles, so end existing sessions to apply the change immediately
         await _userManager.UpdateSecurityStampAsync(user);
@@ -346,7 +347,7 @@ public class UserService : Services.Interfaces.IUserService
 
         var result = await _userManager.UpdateAsync(user);
         if (!result.Succeeded)
-            throw new InvalidOperationException($"Failed to update last login: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+            throw new BusinessRuleException($"Failed to update last login: {string.Join(", ", result.Errors.Select(e => e.Description))}");
     }
 
     public async Task<int> GetTotalUserCountAsync()

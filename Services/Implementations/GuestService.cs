@@ -1,5 +1,6 @@
 using AutoMapper;
 using HotelManagement.Data;
+using HotelManagement.Infrastructure.Exceptions;
 using HotelManagement.Infrastructure.Queries;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
@@ -37,7 +38,7 @@ public class GuestService : CrudService<Guest, GuestDto>, IGuestService
         var isUnique = await IsEmailUniqueAsync(dto.Email);
         if (!isUnique)
         {
-            throw new InvalidOperationException($"A guest with email '{dto.Email}' already exists");
+            throw new BusinessRuleException($"A guest with email '{dto.Email}' already exists");
         }
 
         var guest = _mapper.Map<Guest>(dto);
@@ -66,7 +67,7 @@ public class GuestService : CrudService<Guest, GuestDto>, IGuestService
             var isUnique = await IsEmailUniqueAsync(dto.Email, id);
             if (!isUnique)
             {
-                throw new InvalidOperationException($"A guest with email '{dto.Email}' already exists");
+                throw new BusinessRuleException($"A guest with email '{dto.Email}' already exists");
             }
         }
 
