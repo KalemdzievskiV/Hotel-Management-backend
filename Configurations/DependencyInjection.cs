@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text;
 using AutoMapper;
 using FluentValidation;
@@ -69,12 +70,20 @@ namespace HotelManagement.Configurations
                 options.Password.RequireNonAlphanumeric = false;
                 options.Password.RequireUppercase = false;
                 options.Password.RequireLowercase = false;
+
+                // Slow down password guessing
+                options.Lockout.MaxFailedAccessAttempts = 5;
+                options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
             })
             .AddEntityFrameworkStores<ApplicationDbContext>()
             .AddDefaultTokenProviders();
 
             // 6️⃣ JWT Configuration
             var jwtSettings = configuration.GetSection("JwtSettings").Get<JwtSettings>();
+            if (string.IsNullOrWhiteSpace(jwtSettings?.Secret) || jwtSettings.Secret.Length < 32)
+                throw new InvalidOperationException(
+                    "JwtSettings:Secret must be configured with at least 32 characters " +
+                    "(e.g. the JwtSettings__Secret environment variable). It is not stored in appsettings.json.");
             services.Configure<JwtSettings>(configuration.GetSection("JwtSettings"));
 
             services.AddAuthentication(options =>
@@ -90,9 +99,29 @@ namespace HotelManagement.Configurations
                     ValidateAudience = true,
                     ValidateLifetime = true,
                     ValidateIssuerSigningKey = true,
-                    ValidIssuer = jwtSettings!.Issuer,
+                    ValidIssuer = jwtSettings.Issuer,
                     ValidAudience = jwtSettings.Audience,
                     IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Secret))
+                };
+
+                // Reject tokens of deleted/deactivated users and tokens issued before the user's
+                // security stamp changed (role change, deactivation, password reset)
+                options.Events = new JwtBearerEvents
+                {
+                    OnTokenValidated = async context =>
+                    {
+                        var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+                        var tokenStamp = context.Principal?.FindFirstValue(TokenService.SecurityStampClaim);
+                        var db = context.HttpContext.RequestServices.GetRequiredService<ApplicationDbContext>();
+
+                        var user = await db.Users
+                            .Where(u => u.Id == userId)
+                            .Select(u => new { u.IsActive, u.SecurityStamp })
+                            .FirstOrDefaultAsync();
+
+                        if (user == null || !user.IsActive || string.IsNullOrEmpty(tokenStamp) || user.SecurityStamp != tokenStamp)
+                            context.Fail("Session is no longer valid");
+                    }
                 };
             });
 

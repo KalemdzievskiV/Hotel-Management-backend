@@ -1,8 +1,10 @@
+using HotelManagement.Models;
 using HotelManagement.Models.DTOs.Auth;
 using HotelManagement.Models.Entities;
 using HotelManagement.Services.Interfaces;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace HotelManagement.Controllers;
 
@@ -14,13 +16,16 @@ public class AuthController : ControllerBase
     private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly RoleManager<IdentityRole> _roleManager;
     private readonly ITokenService _tokenService;
+    private readonly JwtSettings _jwtSettings;
 
     public AuthController(
         UserManager<ApplicationUser> userManager,
         SignInManager<ApplicationUser> signInManager,
         RoleManager<IdentityRole> roleManager,
-        ITokenService tokenService)
+        ITokenService tokenService,
+        IOptions<JwtSettings> jwtSettings)
     {
+        _jwtSettings = jwtSettings.Value;
         _userManager = userManager;
         _signInManager = signInManager;
         _roleManager = roleManager;
@@ -79,7 +84,7 @@ public class AuthController : ControllerBase
             Email = user.Email!,
             FullName = user.FullName,
             Roles = roles,
-            ExpiresAt = DateTime.UtcNow.AddHours(1)
+            ExpiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpiryMinutes)
         });
     }
 
@@ -97,7 +102,10 @@ public class AuthController : ControllerBase
         if (!user.IsActive)
             return Unauthorized(new { message = "Your account has been deactivated. Please contact support." });
 
-        var result = await _signInManager.CheckPasswordSignInAsync(user, request.Password, false);
+        var result = await _signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
+        if (result.IsLockedOut)
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                new { message = "Too many failed sign-in attempts. Please try again in a few minutes." });
         if (!result.Succeeded)
             return Unauthorized(new { message = "Invalid email or password" });
 
@@ -114,7 +122,7 @@ public class AuthController : ControllerBase
             Email = user.Email!,
             FullName = user.FullName,
             Roles = roles,
-            ExpiresAt = DateTime.UtcNow.AddHours(1)
+            ExpiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpiryMinutes)
         });
     }
 }

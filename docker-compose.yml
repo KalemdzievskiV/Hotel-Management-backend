@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-HotelManagementDb}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hotel1234}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     ports:
       - "5432:5432"
     volumes:
@@ -24,12 +24,14 @@ services:
     container_name: hotel_backend
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=${POSTGRES_DB:-HotelManagementDb};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-hotel1234}
-      - JwtSettings__Secret=${JWT_SECRET:-YourSuperSecretKeyThatIsAtLeast32CharactersLongForHS256!}
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=${POSTGRES_DB:-HotelManagementDb};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      - JwtSettings__Secret=${JWT_SECRET:?Set JWT_SECRET (32+ characters) in .env}
       - JwtSettings__Issuer=${JWT_ISSUER:-HotelManagementAPI}
       - JwtSettings__Audience=${JWT_AUDIENCE:-HotelManagementClient}
       - JwtSettings__ExpiryMinutes=${JWT_EXPIRY_MINUTES:-60}
       - Cors__AllowedOrigins__0=${FRONTEND_URL:-http://localhost:3000}
+      - SeedAdmin__Email=${SEED_ADMIN_EMAIL:-}
+      - SeedAdmin__Password=${SEED_ADMIN_PASSWORD:-}
     ports:
       - "${BACKEND_PORT:-5001}:8080"
     depends_on:

@@ -11,6 +11,12 @@ namespace HotelManagement.Services.Implementations;
 
 public class TokenService : ITokenService
 {
+    /// <summary>
+    /// Carries the user's Identity security stamp; tokens whose stamp no longer matches are
+    /// rejected (see DependencyInjection), which revokes them on deactivation/role changes.
+    /// </summary>
+    public const string SecurityStampClaim = "sstamp";
+
     private readonly JwtSettings _jwtSettings;
 
     public TokenService(IOptions<JwtSettings> jwtSettings)
@@ -25,7 +31,8 @@ public class TokenService : ITokenService
             new Claim(ClaimTypes.NameIdentifier, user.Id),
             new Claim(ClaimTypes.Email, user.Email ?? string.Empty),
             new Claim(ClaimTypes.Name, user.FullName),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim(SecurityStampClaim, user.SecurityStamp ?? string.Empty)
         };
 
         // Add roles as claims

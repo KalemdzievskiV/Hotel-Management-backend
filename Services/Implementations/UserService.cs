@@ -231,6 +231,7 @@ public class UserService : Services.Interfaces.IUserService
 
         user.IsActive = false;
         user.UpdatedAt = DateTime.UtcNow;
+        await _userManager.UpdateSecurityStampAsync(user); // ends existing sessions
 
         var result = await _userManager.UpdateAsync(user);
         if (!result.Succeeded)
@@ -298,6 +299,9 @@ public class UserService : Services.Interfaces.IUserService
         var addResult = await _userManager.AddToRoleAsync(user, newRole);
         if (!addResult.Succeeded)
             throw new InvalidOperationException($"Failed to add new role: {string.Join(", ", addResult.Errors.Select(e => e.Description))}");
+
+        // Tokens carry roles, so end existing sessions to apply the change immediately
+        await _userManager.UpdateSecurityStampAsync(user);
     }
 
     public async Task AddRoleToUserAsync(string userId, string role)
@@ -313,6 +317,9 @@ public class UserService : Services.Interfaces.IUserService
         var result = await _userManager.AddToRoleAsync(user, role);
         if (!result.Succeeded)
             throw new InvalidOperationException($"Failed to add role: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+
+        // Tokens carry roles, so end existing sessions to apply the change immediately
+        await _userManager.UpdateSecurityStampAsync(user);
     }
 
     public async Task RemoveRoleFromUserAsync(string userId, string role)
@@ -324,6 +331,9 @@ public class UserService : Services.Interfaces.IUserService
         var result = await _userManager.RemoveFromRoleAsync(user, role);
         if (!result.Succeeded)
             throw new InvalidOperationException($"Failed to remove role: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+
+        // Tokens carry roles, so end existing sessions to apply the change immediately
+        await _userManager.UpdateSecurityStampAsync(user);
     }
 
     public async Task UpdateLastLoginAsync(string userId)

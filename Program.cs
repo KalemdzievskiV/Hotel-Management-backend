@@ -14,10 +14,18 @@ var builder = WebApplication.CreateBuilder(args);
 var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
 if (!string.IsNullOrEmpty(databaseUrl))
 {
+    // postgres://user:password@host:port/database - credentials may be URL-encoded
     var uri = new Uri(databaseUrl);
-    var userInfo = uri.UserInfo.Split(':');
-    var connectionString = $"Host={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};Username={userInfo[0]};Password={userInfo[1]}";
-    builder.Configuration["ConnectionStrings:DefaultConnection"] = connectionString;
+    var userInfo = uri.UserInfo.Split(':', 2);
+    var connectionString = new Npgsql.NpgsqlConnectionStringBuilder
+    {
+        Host = uri.Host,
+        Port = uri.Port > 0 ? uri.Port : 5432,
+        Database = uri.AbsolutePath.TrimStart('/'),
+        Username = Uri.UnescapeDataString(userInfo[0]),
+        Password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : null
+    };
+    builder.Configuration["ConnectionStrings:DefaultConnection"] = connectionString.ConnectionString;
 }
 
 // Add services to the container.

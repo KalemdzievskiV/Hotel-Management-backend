@@ -19,6 +19,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         builder.UseContentRoot(Directory.GetCurrentDirectory());
         // Not "Development", so the mock demo data isn't seeded into test databases
         builder.UseEnvironment("Testing");
+        // Secrets aren't in appsettings.json; UseSetting applies early enough for Program's startup code
+        builder.UseSetting("JwtSettings:Secret", "integration-tests-signing-key-at-least-32-chars");
         
         builder.ConfigureServices(services =>
         {
