@@ -67,7 +67,6 @@ public static class DbSeeder
         {
             await userManager.AddToRoleAsync(superAdmin, AppRoles.SuperAdmin);
             Console.WriteLine($"✅ SuperAdmin user created: {email}");
-            Console.WriteLine($"   Password: {password}");
         }
         else
         {
@@ -165,6 +164,25 @@ public static class DbSeeder
                 await userManager.AddToRoleAsync(managerUser, AppRoles.Manager);
                 Console.WriteLine($"✅ Manager user created: {managerEmail}");
             }
+        }
+
+        // 3b. Housekeeper assigned to the hotel, and a registered Guest with a linked guest profile
+        await EnsureUserAsync(userManager, "housekeeper@hotel.com", "Housekeeper123!", "Maria", "Garcia",
+            AppRoles.Housekeeper, hotelId: hotel.Id, jobTitle: "Housekeeper");
+
+        var guestUser = await EnsureUserAsync(userManager, "guest@hotel.com", "Guest123!", "Gary", "Guest", AppRoles.Guest);
+        if (guestUser != null && !context.Guests.Any(g => g.UserId == guestUser.Id))
+        {
+            context.Guests.Add(new Models.Entities.Guest
+            {
+                UserId = guestUser.Id,
+                FirstName = guestUser.FirstName,
+                LastName = guestUser.LastName,
+                Email = guestUser.Email!,
+                PhoneNumber = "+1-555-0199",
+                CreatedAt = DateTime.UtcNow
+            });
+            await context.SaveChangesAsync();
         }
 
         // 4. Create Rooms (varied types across 3 floors)
@@ -426,5 +444,42 @@ public static class DbSeeder
         Console.WriteLine($"   👤 Admin:   admin@hotel.com / Admin123!");
         Console.WriteLine($"   👤 Manager: manager@hotel.com / Manager123!");
         Console.WriteLine($"   👤 SuperAdmin: superadmin@hotel.com / SuperAdmin123!");
+        Console.WriteLine($"   👤 Housekeeper: housekeeper@hotel.com / Housekeeper123!");
+        Console.WriteLine($"   👤 Guest:   guest@hotel.com / Guest123!");
+    }
+
+    /// <summary>
+    /// Creates the user with the role if no account exists for the email; returns the existing or new user
+    /// </summary>
+    private static async Task<Models.Entities.ApplicationUser?> EnsureUserAsync(
+        UserManager<Models.Entities.ApplicationUser> userManager,
+        string email, string password, string firstName, string lastName, string role,
+        int? hotelId = null, string? jobTitle = null)
+    {
+        var user = await userManager.FindByEmailAsync(email);
+        if (user != null)
+            return user;
+
+        user = new Models.Entities.ApplicationUser
+        {
+            UserName = email,
+            Email = email,
+            EmailConfirmed = true,
+            FirstName = firstName,
+            LastName = lastName,
+            HotelId = hotelId,
+            JobTitle = jobTitle
+        };
+
+        var result = await userManager.CreateAsync(user, password);
+        if (!result.Succeeded)
+        {
+            Console.WriteLine($"❌ Failed to create {role} {email}: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+            return null;
+        }
+
+        await userManager.AddToRoleAsync(user, role);
+        Console.WriteLine($"✅ {role} user created: {email}");
+        return user;
     }
 }

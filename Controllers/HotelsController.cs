@@ -13,9 +13,17 @@ namespace HotelManagement.Controllers
     {
         private readonly IHotelService _hotelService;
         private readonly IAuthorizationService _authorizationService;
+        private readonly IHotelAccessService _hotelAccess;
+        private readonly IUserService _userService;
 
-        public HotelsController(IHotelService service, IAuthorizationService authorizationService) : base(service)
+        public HotelsController(
+            IHotelService service,
+            IAuthorizationService authorizationService,
+            IHotelAccessService hotelAccess,
+            IUserService userService) : base(service)
         {
+            _hotelAccess = hotelAccess;
+            _userService = userService;
             _hotelService = service;
             _authorizationService = authorizationService;
         }
@@ -55,6 +63,30 @@ namespace HotelManagement.Controllers
         /// <summary>
         /// Create a new hotel (only SuperAdmin and Admin can create)
         /// </summary>
+        [HttpGet("{id:int}")]
+        [Authorize] // Guests browse any hotel; staff only see hotels they can access
+        public override async Task<IActionResult> GetByIdAsync(int id)
+        {
+            var hotel = User.IsInRole(AppRoles.Guest)
+                ? await _hotelService.GetByIdUnfilteredAsync(id)
+                : await _hotelService.GetByIdAsync(id);
+
+            return hotel == null ? NotFound() : Ok(hotel);
+        }
+
+        /// <summary>
+        /// Staff assigned to the hotel (e.g. to pick a housekeeper for a task)
+        /// </summary>
+        [HttpGet("{id:int}/staff")]
+        [Authorize(Policy = "ManagerOrAbove")]
+        public async Task<IActionResult> GetStaffAsync(int id)
+        {
+            if (!await _hotelAccess.CanAccessHotelAsync(id))
+                return Forbid();
+
+            return Ok(await _userService.GetUsersByHotelAsync(id));
+        }
+
         [HttpPost]
         [Authorize(Policy = "AdminOnly")] // Only SuperAdmin and Admin can create hotels
         public override async Task<IActionResult> CreateAsync([FromBody] HotelDto dto)

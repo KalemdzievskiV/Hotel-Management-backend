@@ -34,7 +34,7 @@ public class HousekeepingService : IHousekeepingService
             query = query.Where(t => t.Status == parsedStatus);
 
         return await query
-            .OrderBy(t => t.Priority)
+            .OrderByDescending(t => t.Priority) // Urgent first
             .ThenBy(t => t.ScheduledFor)
             .Select(t => MapToDto(t))
             .ToListAsync();
@@ -127,7 +127,9 @@ public class HousekeepingService : IHousekeepingService
         {
             var room = task.Room;
             room.LastCleaned = DateTime.UtcNow;
-            room.Status = RoomStatus.Available;
+            // Only release rooms waiting on cleaning; a stay-over clean must not free an occupied room
+            if (room.Status == RoomStatus.Cleaning)
+                room.Status = RoomStatus.Available;
         }
 
         await _context.SaveChangesAsync();
@@ -142,7 +144,7 @@ public class HousekeepingService : IHousekeepingService
             .Include(t => t.AssignedTo)
             .Include(t => t.CreatedBy)
             .Where(t => t.Room.HotelId == hotelId && t.ScheduledFor.Date == day)
-            .OrderBy(t => t.Priority)
+            .OrderByDescending(t => t.Priority) // Urgent first
             .ThenBy(t => t.Room.RoomNumber)
             .ToListAsync();
 

@@ -193,7 +193,7 @@ public class DtoValidationTests
 
         // Assert
         validationResults.Should().NotBeEmpty();
-        validationResults.Should().Contain(v => v.ErrorMessage!.Contains("Full name is required"));
+        validationResults.Should().Contain(v => v.ErrorMessage!.Contains("First name is required"));
     }
 
     #endregion

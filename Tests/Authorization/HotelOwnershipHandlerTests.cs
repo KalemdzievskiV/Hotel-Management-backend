@@ -2,8 +2,11 @@ using HotelManagement.Authorization.Handlers;
 using HotelManagement.Authorization.Requirements;
 using HotelManagement.Data;
 using HotelManagement.Models.Entities;
+using HotelManagement.Services.Implementations;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 using System.Security.Claims;
 using Xunit;
 
@@ -11,178 +14,117 @@ namespace HotelManagement.Tests.Authorization;
 
 public class HotelOwnershipHandlerTests
 {
-    private ApplicationDbContext CreateContext()
+    private readonly ApplicationDbContext _context;
+    private readonly HotelOwnershipHandler _handler;
+
+    public HotelOwnershipHandlerTests()
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-            .Options;
-        
-        return new ApplicationDbContext(options);
+        _context = new ApplicationDbContext(
+            new DbContextOptionsBuilder<ApplicationDbContext>()
+                .UseInMemoryDatabase(Guid.NewGuid().ToString())
+                .Options);
+        var hotelAccess = new HotelAccessService(_context, new Mock<IHttpContextAccessor>().Object);
+        _handler = new HotelOwnershipHandler(hotelAccess);
     }
 
-    private ClaimsPrincipal CreateUser(string userId, string role)
+    private async Task<Hotel> AddHotelAsync(int id, string ownerId)
     {
-        var claims = new List<Claim>
+        var hotel = new Hotel { Id = id, Name = $"Hotel {id}", OwnerId = ownerId, Address = "A", City = "C", Country = "X" };
+        _context.Hotels.Add(hotel);
+        await _context.SaveChangesAsync();
+        return hotel;
+    }
+
+    private async Task AddUserAsync(string userId, int? assignedHotelId)
+    {
+        _context.Users.Add(new ApplicationUser { Id = userId, UserName = userId, FirstName = "F", LastName = "L", HotelId = assignedHotelId });
+        await _context.SaveChangesAsync();
+    }
+
+    private static ClaimsPrincipal CreateUser(string userId, string role) =>
+        new(new ClaimsIdentity(new[]
         {
             new Claim(ClaimTypes.NameIdentifier, userId),
             new Claim(ClaimTypes.Role, role)
-        };
-        return new ClaimsPrincipal(new ClaimsIdentity(claims, "Test"));
+        }, "Test"));
+
+    private async Task<bool> AuthorizeAsync(ClaimsPrincipal user, Hotel hotel)
+    {
+        var authContext = new AuthorizationHandlerContext(new[] { new HotelOwnershipRequirement() }, user, hotel);
+        await _handler.HandleAsync(authContext);
+        return authContext.HasSucceeded;
     }
 
     [Fact]
     public async Task SuperAdmin_CanAccessAnyHotel()
     {
-        // Arrange
-        var context = CreateContext();
-        var handler = new HotelOwnershipHandler(context);
-        
-        var hotel = new Hotel
-        {
-            Id = 1,
-            Name = "Test Hotel",
-            OwnerId = "other-user-id"
-        };
+        var hotel = await AddHotelAsync(1, "other-user-id");
 
-        var user = CreateUser("super-admin-id", "SuperAdmin");
-        var requirement = new HotelOwnershipRequirement();
-        var authContext = new AuthorizationHandlerContext(
-            new[] { requirement }, user, hotel);
-
-        // Act
-        await handler.HandleAsync(authContext);
-
-        // Assert
-        Assert.True(authContext.HasSucceeded);
+        Assert.True(await AuthorizeAsync(CreateUser("super-admin-id", "SuperAdmin"), hotel));
     }
 
     [Fact]
     public async Task Admin_CanAccessOwnHotel()
     {
-        // Arrange
-        var context = CreateContext();
-        var handler = new HotelOwnershipHandler(context);
-        
-        var hotel = new Hotel
-        {
-            Id = 1,
-            Name = "Test Hotel",
-            OwnerId = "admin-user-id"
-        };
+        var hotel = await AddHotelAsync(1, "admin-id");
+        await AddUserAsync("admin-id", null);
 
-        var user = CreateUser("admin-user-id", "Admin");
-        var requirement = new HotelOwnershipRequirement();
-        var authContext = new AuthorizationHandlerContext(
-            new[] { requirement }, user, hotel);
-
-        // Act
-        await handler.HandleAsync(authContext);
-
-        // Assert
-        Assert.True(authContext.HasSucceeded);
+        Assert.True(await AuthorizeAsync(CreateUser("admin-id", "Admin"), hotel));
     }
 
     [Fact]
     public async Task Admin_CannotAccessOtherAdminsHotel()
     {
-        // Arrange
-        var context = CreateContext();
-        var handler = new HotelOwnershipHandler(context);
-        
-        var hotel = new Hotel
-        {
-            Id = 1,
-            Name = "Test Hotel",
-            OwnerId = "other-admin-id"
-        };
+        var hotel = await AddHotelAsync(1, "other-admin-id");
+        await AddUserAsync("admin-id", null);
 
-        var user = CreateUser("admin-user-id", "Admin");
-        var requirement = new HotelOwnershipRequirement();
-        var authContext = new AuthorizationHandlerContext(
-            new[] { requirement }, user, hotel);
-
-        // Act
-        await handler.HandleAsync(authContext);
-
-        // Assert
-        Assert.False(authContext.HasSucceeded);
+        Assert.False(await AuthorizeAsync(CreateUser("admin-id", "Admin"), hotel));
     }
 
     [Fact]
-    public async Task Manager_CanAccessOwnHotel()
+    public async Task Manager_CanAccessAssignedHotel()
     {
-        // Arrange
-        var context = CreateContext();
-        var handler = new HotelOwnershipHandler(context);
-        
-        var hotel = new Hotel
-        {
-            Id = 1,
-            Name = "Test Hotel",
-            OwnerId = "manager-user-id"
-        };
+        var hotel = await AddHotelAsync(1, "owner-id");
+        await AddUserAsync("manager-id", assignedHotelId: 1);
 
-        var user = CreateUser("manager-user-id", "Manager");
-        var requirement = new HotelOwnershipRequirement();
-        var authContext = new AuthorizationHandlerContext(
-            new[] { requirement }, user, hotel);
-
-        // Act
-        await handler.HandleAsync(authContext);
-
-        // Assert
-        Assert.True(authContext.HasSucceeded);
+        Assert.True(await AuthorizeAsync(CreateUser("manager-id", "Manager"), hotel));
     }
 
     [Fact]
     public async Task Manager_CannotAccessOtherHotel()
     {
-        // Arrange
-        var context = CreateContext();
-        var handler = new HotelOwnershipHandler(context);
-        
-        var hotel = new Hotel
-        {
-            Id = 1,
-            Name = "Test Hotel",
-            OwnerId = "other-user-id"
-        };
+        await AddHotelAsync(1, "owner-id");
+        var otherHotel = await AddHotelAsync(2, "owner-id");
+        await AddUserAsync("manager-id", assignedHotelId: 1);
 
-        var user = CreateUser("manager-user-id", "Manager");
-        var requirement = new HotelOwnershipRequirement();
-        var authContext = new AuthorizationHandlerContext(
-            new[] { requirement }, user, hotel);
+        Assert.False(await AuthorizeAsync(CreateUser("manager-id", "Manager"), otherHotel));
+    }
 
-        // Act
-        await handler.HandleAsync(authContext);
+    [Fact]
+    public async Task Manager_OwningAHotelWithoutAssignment_CannotAccessIt()
+    {
+        // Ownership only grants access to Admins; Managers work at the hotel they're assigned to
+        var hotel = await AddHotelAsync(1, "manager-id");
+        await AddUserAsync("manager-id", null);
 
-        // Assert
-        Assert.False(authContext.HasSucceeded);
+        Assert.False(await AuthorizeAsync(CreateUser("manager-id", "Manager"), hotel));
+    }
+
+    [Fact]
+    public async Task Housekeeper_CanAccessAssignedHotel()
+    {
+        var hotel = await AddHotelAsync(1, "owner-id");
+        await AddUserAsync("housekeeper-id", assignedHotelId: 1);
+
+        Assert.True(await AuthorizeAsync(CreateUser("housekeeper-id", "Housekeeper"), hotel));
     }
 
     [Fact]
     public async Task Guest_CannotAccessAnyHotel()
     {
-        // Arrange
-        var context = CreateContext();
-        var handler = new HotelOwnershipHandler(context);
-        
-        var hotel = new Hotel
-        {
-            Id = 1,
-            Name = "Test Hotel",
-            OwnerId = "admin-user-id"
-        };
+        var hotel = await AddHotelAsync(1, "guest-id");
+        await AddUserAsync("guest-id", assignedHotelId: 1);
 
-        var user = CreateUser("guest-user-id", "Guest");
-        var requirement = new HotelOwnershipRequirement();
-        var authContext = new AuthorizationHandlerContext(
-            new[] { requirement }, user, hotel);
-
-        // Act
-        await handler.HandleAsync(authContext);
-
-        // Assert
-        Assert.False(authContext.HasSucceeded);
+        Assert.False(await AuthorizeAsync(CreateUser("guest-id", "Guest"), hotel));
     }
 }

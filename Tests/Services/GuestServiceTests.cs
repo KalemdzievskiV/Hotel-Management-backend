@@ -6,6 +6,7 @@ using HotelManagement.Models.Entities;
 using HotelManagement.Repositories.Interfaces;
 using HotelManagement.Services.Implementations;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Moq;
 using Xunit;
 
@@ -16,7 +17,7 @@ public class GuestServiceTests
     private readonly Mock<IGenericRepository<Guest>> _mockRepository;
     private readonly Mock<IMapper> _mockMapper;
     private readonly Mock<IHttpContextAccessor> _mockHttpContextAccessor;
-    private readonly Mock<ApplicationDbContext> _mockContext;
+    private readonly ApplicationDbContext _context;
     private readonly GuestService _service;
 
     public GuestServiceTests()
@@ -24,12 +25,15 @@ public class GuestServiceTests
         _mockRepository = new Mock<IGenericRepository<Guest>>();
         _mockMapper = new Mock<IMapper>();
         _mockHttpContextAccessor = new Mock<IHttpContextAccessor>();
-        _mockContext = new Mock<ApplicationDbContext>();
+        _context = new ApplicationDbContext(
+            new DbContextOptionsBuilder<ApplicationDbContext>()
+                .UseInMemoryDatabase(Guid.NewGuid().ToString())
+                .Options);
         _service = new GuestService(
             _mockRepository.Object, 
             _mockMapper.Object, 
             _mockHttpContextAccessor.Object,
-            _mockContext.Object);
+            _context);
     }
 
     #region CreateAsync Tests
@@ -232,7 +236,7 @@ public class GuestServiceTests
         _mockMapper.Setup(m => m.Map<IEnumerable<GuestDto>>(guests)).Returns(dtos);
 
         // Act
-        var result = await _service.SearchByNameAsync("John");
+        var result = await _service.SearchByNameAsync("John", new[] { 1 });
 
         // Assert
         result.Should().HaveCount(2);
@@ -300,7 +304,7 @@ public class GuestServiceTests
         _mockMapper.Setup(m => m.Map<IEnumerable<GuestDto>>(guests)).Returns(dtos);
 
         // Act
-        var result = await _service.GetVIPGuestsAsync();
+        var result = await _service.GetVIPGuestsAsync(new[] { 1 });
 
         // Assert
         result.Should().HaveCount(2);
@@ -388,7 +392,7 @@ public class GuestServiceTests
         _mockMapper.Setup(m => m.Map<IEnumerable<GuestDto>>(guests)).Returns(dtos);
 
         // Act
-        var result = await _service.GetBlacklistedGuestsAsync();
+        var result = await _service.GetBlacklistedGuestsAsync(new[] { 1 });
 
         // Assert
         result.Should().HaveCount(1);

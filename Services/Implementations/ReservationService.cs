@@ -149,28 +149,30 @@ public class ReservationService : IReservationService
 
     public async Task<ReservationDto?> GetReservationByIdAsync(int id)
     {
-        var reservation = await _context.Reservations
-            .Include(r => r.Hotel)
-            .Include(r => r.Room)
-            .Include(r => r.Guest)
-            .Include(r => r.CreatedBy)
-            .FirstOrDefaultAsync(r => r.Id == id);
+        var reservation = await QueryWithDetails().FirstOrDefaultAsync(r => r.Id == id);
 
         return reservation == null ? null : MapToDto(reservation);
     }
 
-    public async Task<IEnumerable<ReservationDto>> GetAllReservationsAsync()
-    {
-        var reservations = await _context.Reservations
-            .Include(r => r.Hotel)
-            .Include(r => r.Room)
-            .Include(r => r.Guest)
-            .Include(r => r.CreatedBy)
-            .OrderByDescending(r => r.CreatedAt)
-            .ToListAsync();
+    /// <summary>
+    /// Reservations with the navigation properties ReservationDto needs
+    /// </summary>
+    private IQueryable<Reservation> QueryWithDetails() => _context.Reservations
+        .Include(r => r.Hotel)
+        .Include(r => r.Room)
+        .Include(r => r.Guest)
+        .Include(r => r.CreatedBy);
 
+    private async Task<IEnumerable<ReservationDto>> ToDtosAsync(IQueryable<Reservation> query)
+    {
+        var reservations = await query.ToListAsync();
         return reservations.Select(MapToDto);
     }
+
+    public Task<IEnumerable<ReservationDto>> GetReservationsForHotelsAsync(IReadOnlyCollection<int> hotelIds) =>
+        ToDtosAsync(QueryWithDetails()
+            .Where(r => hotelIds.Contains(r.HotelId))
+            .OrderByDescending(r => r.CreatedAt));
 
     public async Task<ReservationDto> UpdateReservationAsync(int id, UpdateReservationDto updateDto)
     {
@@ -276,88 +278,62 @@ public class ReservationService : IReservationService
         await _context.SaveChangesAsync();
     }
 
-    public async Task<IEnumerable<ReservationDto>> GetReservationsByHotelAsync(int hotelId)
-    {
-        var reservations = await _context.Reservations
-            .Include(r => r.Hotel)
-            .Include(r => r.Room)
-            .Include(r => r.Guest)
-            .Include(r => r.CreatedBy)
+    public Task<IEnumerable<ReservationDto>> GetReservationsByHotelAsync(int hotelId) =>
+        ToDtosAsync(QueryWithDetails()
             .Where(r => r.HotelId == hotelId)
-            .OrderByDescending(r => r.CreatedAt)
-            .ToListAsync();
+            .OrderByDescending(r => r.CreatedAt));
 
-        return reservations.Select(MapToDto);
-    }
-
-    public async Task<IEnumerable<ReservationDto>> GetReservationsByRoomAsync(int roomId)
-    {
-        var reservations = await _context.Reservations
-            .Include(r => r.Hotel)
-            .Include(r => r.Room)
-            .Include(r => r.Guest)
-            .Include(r => r.CreatedBy)
+    public Task<IEnumerable<ReservationDto>> GetReservationsByRoomAsync(int roomId) =>
+        ToDtosAsync(QueryWithDetails()
             .Where(r => r.RoomId == roomId)
-            .OrderByDescending(r => r.CheckInDate)
-            .ToListAsync();
+            .OrderByDescending(r => r.CheckInDate));
 
-        return reservations.Select(MapToDto);
+    public Task<IEnumerable<ReservationDto>> GetReservationsByGuestAsync(int guestId, IReadOnlyCollection<int> hotelIds) =>
+        ToDtosAsync(QueryWithDetails()
+            .Where(r => r.GuestId == guestId && hotelIds.Contains(r.HotelId))
+            .OrderByDescending(r => r.CreatedAt));
+
+    public Task<IEnumerable<ReservationDto>> GetReservationsByStatusAsync(ReservationStatus status, IReadOnlyCollection<int> hotelIds) =>
+        ToDtosAsync(QueryWithDetails()
+            .Where(r => r.Status == status && hotelIds.Contains(r.HotelId))
+            .OrderByDescending(r => r.CreatedAt));
+
+    /// <summary>
+    /// Reservations overlapping the range (not only those fully inside it)
+    /// </summary>
+    public Task<IEnumerable<ReservationDto>> GetReservationsByDateRangeAsync(DateTime startDate, DateTime endDate, IReadOnlyCollection<int> hotelIds) =>
+        ToDtosAsync(QueryWithDetails()
+            .Where(r => hotelIds.Contains(r.HotelId) && r.CheckInDate < endDate && r.CheckOutDate > startDate)
+            .OrderBy(r => r.CheckInDate));
+
+    /// <summary>
+    /// Reservations for the guest profile linked to this user account, whoever created them
+    /// </summary>
+    public Task<IEnumerable<ReservationDto>> GetGuestUserReservationsAsync(string userId) =>
+        ToDtosAsync(QueryWithDetails()
+            .Where(r => r.Guest.UserId == userId)
+            .OrderByDescending(r => r.CreatedAt));
+
+    public Task<IEnumerable<ReservationDto>> GetCheckInsOnAsync(DateTime day, IReadOnlyCollection<int> hotelIds)
+    {
+        var start = day.Date;
+        var end = start.AddDays(1);
+        return ToDtosAsync(QueryWithDetails()
+            .Where(r => hotelIds.Contains(r.HotelId)
+                && r.CheckInDate >= start && r.CheckInDate < end
+                && (r.Status == ReservationStatus.Confirmed || r.Status == ReservationStatus.CheckedIn))
+            .OrderBy(r => r.CheckInDate));
     }
 
-    public async Task<IEnumerable<ReservationDto>> GetReservationsByGuestAsync(int guestId)
+    public Task<IEnumerable<ReservationDto>> GetCheckOutsOnAsync(DateTime day, IReadOnlyCollection<int> hotelIds)
     {
-        var reservations = await _context.Reservations
-            .Include(r => r.Hotel)
-            .Include(r => r.Room)
-            .Include(r => r.Guest)
-            .Include(r => r.CreatedBy)
-            .Where(r => r.GuestId == guestId)
-            .OrderByDescending(r => r.CreatedAt)
-            .ToListAsync();
-
-        return reservations.Select(MapToDto);
-    }
-
-    public async Task<IEnumerable<ReservationDto>> GetReservationsByStatusAsync(ReservationStatus status)
-    {
-        var reservations = await _context.Reservations
-            .Include(r => r.Hotel)
-            .Include(r => r.Room)
-            .Include(r => r.Guest)
-            .Include(r => r.CreatedBy)
-            .Where(r => r.Status == status)
-            .OrderByDescending(r => r.CreatedAt)
-            .ToListAsync();
-
-        return reservations.Select(MapToDto);
-    }
-
-    public async Task<IEnumerable<ReservationDto>> GetReservationsByDateRangeAsync(DateTime startDate, DateTime endDate)
-    {
-        var reservations = await _context.Reservations
-            .Include(r => r.Hotel)
-            .Include(r => r.Room)
-            .Include(r => r.Guest)
-            .Include(r => r.CreatedBy)
-            .Where(r => r.CheckInDate >= startDate && r.CheckOutDate <= endDate)
-            .OrderBy(r => r.CheckInDate)
-            .ToListAsync();
-
-        return reservations.Select(MapToDto);
-    }
-
-    public async Task<IEnumerable<ReservationDto>> GetUserReservationsAsync(string userId)
-    {
-        var reservations = await _context.Reservations
-            .Include(r => r.Hotel)
-            .Include(r => r.Room)
-            .Include(r => r.Guest)
-            .Include(r => r.CreatedBy)
-            .Where(r => r.CreatedByUserId == userId)
-            .OrderByDescending(r => r.CreatedAt)
-            .ToListAsync();
-
-        return reservations.Select(MapToDto);
+        var start = day.Date;
+        var end = start.AddDays(1);
+        return ToDtosAsync(QueryWithDetails()
+            .Where(r => hotelIds.Contains(r.HotelId)
+                && r.CheckOutDate >= start && r.CheckOutDate < end
+                && (r.Status == ReservationStatus.CheckedIn || r.Status == ReservationStatus.CheckedOut))
+            .OrderBy(r => r.CheckOutDate));
     }
 
     public async Task<bool> IsRoomAvailableAsync(int roomId, DateTime checkIn, DateTime checkOut, int? excludeReservationId = null)
@@ -467,22 +443,13 @@ public class ReservationService : IReservationService
         return (true, string.Empty);
     }
 
-    public async Task<IEnumerable<ReservationDto>> GetConflictingReservationsAsync(int roomId, DateTime checkIn, DateTime checkOut)
-    {
-        var reservations = await _context.Reservations
-            .Include(r => r.Hotel)
-            .Include(r => r.Room)
-            .Include(r => r.Guest)
-            .Include(r => r.CreatedBy)
+    public Task<IEnumerable<ReservationDto>> GetConflictingReservationsAsync(int roomId, DateTime checkIn, DateTime checkOut) =>
+        ToDtosAsync(QueryWithDetails()
             .Where(r => r.RoomId == roomId
                 && r.Status != ReservationStatus.Cancelled
                 && r.Status != ReservationStatus.CheckedOut
                 && r.Status != ReservationStatus.NoShow
-                && ((r.CheckInDate < checkOut && r.CheckOutDate > checkIn)))
-            .ToListAsync();
-
-        return reservations.Select(MapToDto);
-    }
+                && r.CheckInDate < checkOut && r.CheckOutDate > checkIn));
 
     public async Task<IEnumerable<RoomDto>> GetAvailableRoomsAsync(
         int hotelId, 
@@ -725,21 +692,18 @@ public class ReservationService : IReservationService
             ?? throw new InvalidOperationException("Failed to retrieve reservation after refund");
     }
 
-    public async Task<int> GetTotalReservationsCountAsync()
-    {
-        return await _context.Reservations.CountAsync();
-    }
+    public Task<int> GetTotalReservationsCountAsync(IReadOnlyCollection<int> hotelIds) =>
+        _context.Reservations.CountAsync(r => hotelIds.Contains(r.HotelId));
 
-    public async Task<decimal> GetTotalRevenueAsync()
-    {
-        return await _context.Reservations
-            .Where(r => r.Status == ReservationStatus.CheckedOut)
+    public Task<decimal> GetTotalRevenueAsync(IReadOnlyCollection<int> hotelIds) =>
+        _context.Reservations
+            .Where(r => hotelIds.Contains(r.HotelId) && r.Status == ReservationStatus.CheckedOut)
             .SumAsync(r => r.TotalAmount);
-    }
 
-    public async Task<Dictionary<ReservationStatus, int>> GetReservationCountByStatusAsync()
+    public async Task<Dictionary<ReservationStatus, int>> GetReservationCountByStatusAsync(IReadOnlyCollection<int> hotelIds)
     {
         var counts = await _context.Reservations
+            .Where(r => hotelIds.Contains(r.HotelId))
             .GroupBy(r => r.Status)
             .Select(g => new { Status = g.Key, Count = g.Count() })
             .ToListAsync();
@@ -747,15 +711,15 @@ public class ReservationService : IReservationService
         return counts.ToDictionary(x => x.Status, x => x.Count);
     }
 
-    public async Task<Dictionary<string, int>> GetReservationCountByMonthAsync(int year)
+    public async Task<Dictionary<string, int>> GetReservationCountByMonthAsync(int year, IReadOnlyCollection<int> hotelIds)
     {
-        var reservations = await _context.Reservations
-            .Where(r => r.CreatedAt.Year == year)
+        var counts = await _context.Reservations
+            .Where(r => hotelIds.Contains(r.HotelId) && r.CreatedAt.Year == year)
+            .GroupBy(r => r.CreatedAt.Month)
+            .Select(g => new { Month = g.Key, Count = g.Count() })
             .ToListAsync();
 
-        return reservations
-            .GroupBy(r => r.CreatedAt.ToString("yyyy-MM"))
-            .ToDictionary(g => g.Key, g => g.Count());
+        return counts.OrderBy(x => x.Month).ToDictionary(x => $"{year}-{x.Month:D2}", x => x.Count);
     }
 
     private ReservationDto MapToDto(Reservation reservation)

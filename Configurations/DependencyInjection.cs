@@ -39,20 +39,23 @@ namespace HotelManagement.Configurations
             services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
 
             // 4️⃣ Services
-            // 3️⃣ Services
             services.AddScoped<ICrudService<HotelDto>>(sp =>
             {
                 var repo = sp.GetRequiredService<IGenericRepository<Hotel>>();
                 var mapper = sp.GetRequiredService<IMapper>();
                 return new CrudService<Hotel, HotelDto>(repo, mapper);
             });
-            
+
+            services.AddScoped<IHotelAccessService, HotelAccessService>();
             services.AddScoped<IHotelService, HotelService>();
             services.AddScoped<IRoomService, RoomService>();
             services.AddScoped<IGuestService, GuestService>();
             services.AddScoped<IUserService, UserService>();
             services.AddScoped<IReservationService, ReservationService>();
             services.AddScoped<ITokenService, TokenService>();
+            services.AddScoped<IReportService, ReportService>();
+            services.AddScoped<IInventoryService, InventoryService>();
+            services.AddScoped<IHousekeepingService, HousekeepingService>();
 
             // 4️⃣ AutoMapper
             services.AddAutoMapper(typeof(AutoMapperProfile));
@@ -91,15 +94,6 @@ namespace HotelManagement.Configurations
                     IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Secret))
                 };
             });
-
-            // 7️⃣ Token Service
-            services.AddScoped<ITokenService, TokenService>();
-
-            // 8️⃣ Business Services
-            services.AddScoped<IHotelService, HotelService>();
-            services.AddScoped<IReportService, ReportService>();
-            services.AddScoped<IInventoryService, InventoryService>();
-            services.AddScoped<IHousekeepingService, HousekeepingService>();
 
             // 9️⃣ FluentValidation
             services.AddFluentValidationAutoValidation();

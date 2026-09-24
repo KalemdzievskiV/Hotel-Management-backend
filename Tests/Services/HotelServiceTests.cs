@@ -1,127 +1,88 @@
 using AutoMapper;
 using FluentAssertions;
 using HotelManagement.Data;
+using HotelManagement.Infrastructure.Mapping;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
-using HotelManagement.Repositories.Interfaces;
+using HotelManagement.Repositories.Implementations;
 using HotelManagement.Services.Implementations;
-using Microsoft.AspNetCore.Http;
+using HotelManagement.Services.Interfaces;
+using Microsoft.EntityFrameworkCore;
 using Moq;
 using Xunit;
 
 namespace HotelManagement.Tests.Services;
 
+/// <summary>
+/// HotelService queries the DbContext directly (with SQL projections), so these tests use a real
+/// in-memory database and the real AutoMapper profile instead of mocks.
+/// </summary>
 public class HotelServiceTests
 {
-    private readonly Mock<IGenericRepository<Hotel>> _mockRepository;
-    private readonly Mock<IMapper> _mockMapper;
-    private readonly Mock<ApplicationDbContext> _mockContext;
-    private readonly Mock<IHttpContextAccessor> _mockHttpContextAccessor;
+    private readonly ApplicationDbContext _context;
     private readonly HotelService _service;
 
     public HotelServiceTests()
     {
-        _mockRepository = new Mock<IGenericRepository<Hotel>>();
-        _mockMapper = new Mock<IMapper>();
-        _mockContext = new Mock<ApplicationDbContext>();
-        _mockHttpContextAccessor = new Mock<IHttpContextAccessor>();
-        _service = new HotelService(_mockRepository.Object, _mockMapper.Object, _mockContext.Object, _mockHttpContextAccessor.Object);
+        _context = new ApplicationDbContext(
+            new DbContextOptionsBuilder<ApplicationDbContext>()
+                .UseInMemoryDatabase(Guid.NewGuid().ToString())
+                .Options);
+        var mapper = new MapperConfiguration(cfg => cfg.AddProfile<AutoMapperProfile>()).CreateMapper();
+        _service = new HotelService(
+            new GenericRepository<Hotel>(_context),
+            mapper,
+            _context,
+            new Mock<IHotelAccessService>().Object);
     }
+
+    private async Task<Hotel> AddHotelAsync(string ownerId, string name = "Hotel")
+    {
+        // Owner is a required navigation, so queries inner-join on it; the owner must exist
+        if (await _context.Users.FindAsync(ownerId) == null)
+            _context.Users.Add(new ApplicationUser { Id = ownerId, UserName = ownerId, FirstName = "Owner", LastName = ownerId });
+
+        var hotel = new Hotel { OwnerId = ownerId, Name = name, Address = "1 Main St", City = "City", Country = "Country" };
+        _context.Hotels.Add(hotel);
+        await _context.SaveChangesAsync();
+        return hotel;
+    }
+
+    private static HotelDto NewHotelDto(string? ownerId, string name = "Test Hotel") => new()
+    {
+        OwnerId = ownerId,
+        Name = name,
+        Address = "123 Main St",
+        City = "New York",
+        Country = "USA"
+    };
 
     #region CreateAsync Tests
 
     [Fact]
     public async Task CreateAsync_WithValidOwnerId_ShouldCreateHotel()
     {
-        // Arrange
-        var dto = new HotelDto
-        {
-            OwnerId = "user-123",
-            Name = "Test Hotel",
-            Address = "123 Main St",
-            City = "New York",
-            Country = "USA"
-        };
+        var result = await _service.CreateAsync(NewHotelDto("user-123"));
 
-        var hotel = new Hotel
-        {
-            OwnerId = "user-123",
-            Name = "Test Hotel",
-            Address = "123 Main St",
-            City = "New York",
-            Country = "USA"
-        };
-
-        _mockMapper.Setup(m => m.Map<Hotel>(dto)).Returns(hotel);
-        _mockRepository.Setup(r => r.AddAsync(It.IsAny<Hotel>())).Returns(Task.CompletedTask);
-        _mockRepository.Setup(r => r.SaveAsync()).Returns(Task.CompletedTask);
-        _mockMapper.Setup(m => m.Map<HotelDto>(It.IsAny<Hotel>())).Returns(dto);
-
-        // Act
-        var result = await _service.CreateAsync(dto);
-
-        // Assert
-        result.Should().NotBeNull();
         result.OwnerId.Should().Be("user-123");
-        _mockRepository.Verify(r => r.AddAsync(It.Is<Hotel>(h => h.CreatedAt != default)), Times.Once);
-        _mockRepository.Verify(r => r.SaveAsync(), Times.Once);
+        (await _context.Hotels.CountAsync()).Should().Be(1);
     }
 
     [Fact]
     public async Task CreateAsync_WithoutOwnerId_ShouldThrowException()
     {
-        // Arrange
-        var dto = new HotelDto
-        {
-            OwnerId = null,
-            Name = "Test Hotel",
-            Address = "123 Main St",
-            City = "New York",
-            Country = "USA"
-        };
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateAsync(NewHotelDto(null)));
 
-        // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-        {
-            await _service.CreateAsync(dto);
-        });
-
-        _mockRepository.Verify(r => r.AddAsync(It.IsAny<Hotel>()), Times.Never);
-        _mockRepository.Verify(r => r.SaveAsync(), Times.Never);
+        (await _context.Hotels.CountAsync()).Should().Be(0);
     }
 
     [Fact]
     public async Task CreateAsync_ShouldSetCreatedAtTimestamp()
     {
-        // Arrange
-        var dto = new HotelDto
-        {
-            OwnerId = "user-123",
-            Name = "Test Hotel",
-            Address = "123 Main St",
-            City = "New York",
-            Country = "USA"
-        };
+        var result = await _service.CreateAsync(NewHotelDto("user-123"));
 
-        var hotel = new Hotel
-        {
-            OwnerId = "user-123",
-            Name = "Test Hotel"
-        };
-
-        _mockMapper.Setup(m => m.Map<Hotel>(dto)).Returns(hotel);
-        _mockRepository.Setup(r => r.AddAsync(It.IsAny<Hotel>())).Returns(Task.CompletedTask);
-        _mockRepository.Setup(r => r.SaveAsync()).Returns(Task.CompletedTask);
-        _mockMapper.Setup(m => m.Map<HotelDto>(It.IsAny<Hotel>())).Returns(dto);
-
-        // Act
-        await _service.CreateAsync(dto);
-
-        // Assert
-        _mockRepository.Verify(r => r.AddAsync(It.Is<Hotel>(h =>
-            h.CreatedAt > DateTime.UtcNow.AddSeconds(-5) &&
-            h.CreatedAt <= DateTime.UtcNow
-        )), Times.Once);
+        var saved = await _context.Hotels.SingleAsync(h => h.Id == result.Id);
+        saved.CreatedAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(5));
     }
 
     #endregion
@@ -131,82 +92,31 @@ public class HotelServiceTests
     [Fact]
     public async Task UpdateAsync_ShouldNotChangeOwnerId()
     {
-        // Arrange
-        var existingHotel = new Hotel
-        {
-            Id = 1,
-            OwnerId = "original-owner",
-            Name = "Old Name"
-        };
+        var hotel = await AddHotelAsync("original-owner", "Old Name");
 
-        var dto = new HotelDto
-        {
-            Id = 1,
-            OwnerId = "different-owner", // Attempting to change owner
-            Name = "New Name"
-        };
+        await _service.UpdateAsync(hotel.Id, NewHotelDto("different-owner", "New Name"));
 
-        _mockRepository.Setup(r => r.GetByIdAsync(1)).ReturnsAsync(existingHotel);
-        _mockMapper.Setup(m => m.Map(It.IsAny<HotelDto>(), It.IsAny<Hotel>())).Returns(existingHotel);
-        _mockRepository.Setup(r => r.Update(It.IsAny<Hotel>()));
-        _mockRepository.Setup(r => r.SaveAsync()).Returns(Task.CompletedTask);
-        _mockMapper.Setup(m => m.Map<HotelDto>(It.IsAny<Hotel>())).Returns(dto);
-
-        // Act
-        await _service.UpdateAsync(1, dto);
-
-        // Assert - OwnerId should remain unchanged
-        dto.OwnerId.Should().Be("original-owner");
-        _mockRepository.Verify(r => r.Update(It.IsAny<Hotel>()), Times.Once);
+        var saved = await _context.Hotels.SingleAsync(h => h.Id == hotel.Id);
+        saved.OwnerId.Should().Be("original-owner");
+        saved.Name.Should().Be("New Name");
     }
 
     [Fact]
     public async Task UpdateAsync_ShouldSetUpdatedAtTimestamp()
     {
-        // Arrange
-        var existingHotel = new Hotel
-        {
-            Id = 1,
-            OwnerId = "user-123",
-            Name = "Old Name"
-        };
+        var hotel = await AddHotelAsync("user-123", "Old Name");
 
-        var dto = new HotelDto
-        {
-            Id = 1,
-            OwnerId = "user-123",
-            Name = "New Name"
-        };
+        await _service.UpdateAsync(hotel.Id, NewHotelDto("user-123", "New Name"));
 
-        _mockRepository.Setup(r => r.GetByIdAsync(1)).ReturnsAsync(existingHotel);
-        _mockMapper.Setup(m => m.Map(It.IsAny<HotelDto>(), It.IsAny<Hotel>())).Returns(existingHotel);
-        _mockRepository.Setup(r => r.Update(It.IsAny<Hotel>()));
-        _mockRepository.Setup(r => r.SaveAsync()).Returns(Task.CompletedTask);
-        _mockMapper.Setup(m => m.Map<HotelDto>(It.IsAny<Hotel>())).Returns(dto);
-
-        // Act
-        await _service.UpdateAsync(1, dto);
-
-        // Assert
-        _mockRepository.Verify(r => r.Update(It.Is<Hotel>(h =>
-            h.UpdatedAt.HasValue &&
-            h.UpdatedAt.Value > DateTime.UtcNow.AddSeconds(-5) &&
-            h.UpdatedAt.Value <= DateTime.UtcNow
-        )), Times.Once);
+        var saved = await _context.Hotels.SingleAsync(h => h.Id == hotel.Id);
+        saved.UpdatedAt.Should().NotBeNull();
+        saved.UpdatedAt!.Value.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(5));
     }
 
     [Fact]
     public async Task UpdateAsync_WithNonExistentHotel_ShouldThrowException()
     {
-        // Arrange
-        var dto = new HotelDto { Id = 999, Name = "Test" };
-        _mockRepository.Setup(r => r.GetByIdAsync(999)).ReturnsAsync((Hotel?)null);
-
-        // Act & Assert
-        await Assert.ThrowsAsync<KeyNotFoundException>(async () =>
-        {
-            await _service.UpdateAsync(999, dto);
-        });
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateAsync(999, NewHotelDto("user-123")));
     }
 
     #endregion
@@ -216,47 +126,38 @@ public class HotelServiceTests
     [Fact]
     public async Task GetHotelsByOwnerAsync_ShouldReturnOnlyOwnersHotels()
     {
-        // Arrange
-        var ownerId = "user-123";
-        var hotels = new List<Hotel>
-        {
-            new() { Id = 1, OwnerId = ownerId, Name = "Hotel 1" },
-            new() { Id = 2, OwnerId = ownerId, Name = "Hotel 2" }
-        };
+        await AddHotelAsync("user-123", "Hotel 1");
+        await AddHotelAsync("user-123", "Hotel 2");
+        await AddHotelAsync("someone-else", "Hotel 3");
 
-        var dtos = new List<HotelDto>
-        {
-            new() { Id = 1, OwnerId = ownerId, Name = "Hotel 1" },
-            new() { Id = 2, OwnerId = ownerId, Name = "Hotel 2" }
-        };
+        var result = await _service.GetHotelsByOwnerAsync("user-123");
 
-        _mockRepository.Setup(r => r.FindAsync(It.IsAny<System.Linq.Expressions.Expression<Func<Hotel, bool>>>()))
-            .ReturnsAsync(hotels);
-        _mockMapper.Setup(m => m.Map<IEnumerable<HotelDto>>(hotels)).Returns(dtos);
-
-        // Act
-        var result = await _service.GetHotelsByOwnerAsync(ownerId);
-
-        // Assert
         result.Should().HaveCount(2);
-        result.Should().AllSatisfy(h => h.OwnerId.Should().Be(ownerId));
+        result.Should().AllSatisfy(h => h.OwnerId.Should().Be("user-123"));
     }
 
     [Fact]
     public async Task GetHotelsByOwnerAsync_WithNoHotels_ShouldReturnEmpty()
     {
-        // Arrange
-        var ownerId = "user-with-no-hotels";
-        _mockRepository.Setup(r => r.FindAsync(It.IsAny<System.Linq.Expressions.Expression<Func<Hotel, bool>>>()))
-            .ReturnsAsync(new List<Hotel>());
-        _mockMapper.Setup(m => m.Map<IEnumerable<HotelDto>>(It.IsAny<IEnumerable<Hotel>>()))
-            .Returns(new List<HotelDto>());
+        await AddHotelAsync("someone-else");
 
-        // Act
-        var result = await _service.GetHotelsByOwnerAsync(ownerId);
+        var result = await _service.GetHotelsByOwnerAsync("user-with-no-hotels");
 
-        // Assert
         result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetHotelsByOwnerAsync_ShouldIncludeRoomCount()
+    {
+        var hotel = await AddHotelAsync("user-123");
+        _context.Rooms.AddRange(
+            new Room { HotelId = hotel.Id, RoomNumber = "101" },
+            new Room { HotelId = hotel.Id, RoomNumber = "102" });
+        await _context.SaveChangesAsync();
+
+        var result = await _service.GetHotelsByOwnerAsync("user-123");
+
+        result.Single().TotalRooms.Should().Be(2);
     }
 
     #endregion
@@ -266,63 +167,26 @@ public class HotelServiceTests
     [Fact]
     public async Task GetAllHotelsForUserAsync_AsSuperAdmin_ShouldReturnAllHotels()
     {
-        // Arrange
-        var superAdminId = "super-admin-id";
-        var allHotels = new List<Hotel>
-        {
-            new() { Id = 1, OwnerId = "user-1", Name = "Hotel 1" },
-            new() { Id = 2, OwnerId = "user-2", Name = "Hotel 2" },
-            new() { Id = 3, OwnerId = "user-3", Name = "Hotel 3" }
-        };
+        await AddHotelAsync("user-1");
+        await AddHotelAsync("user-2");
+        await AddHotelAsync("user-3");
 
-        var allDtos = new List<HotelDto>
-        {
-            new() { Id = 1, OwnerId = "user-1", Name = "Hotel 1" },
-            new() { Id = 2, OwnerId = "user-2", Name = "Hotel 2" },
-            new() { Id = 3, OwnerId = "user-3", Name = "Hotel 3" }
-        };
+        var result = await _service.GetAllHotelsForUserAsync("super-admin-id", isSuperAdmin: true);
 
-        _mockRepository.Setup(r => r.GetAllAsync()).ReturnsAsync(allHotels);
-        _mockMapper.Setup(m => m.Map<IEnumerable<HotelDto>>(allHotels)).Returns(allDtos);
-
-        // Act
-        var result = await _service.GetAllHotelsForUserAsync(superAdminId, isSuperAdmin: true);
-
-        // Assert
         result.Should().HaveCount(3);
-        _mockRepository.Verify(r => r.GetAllAsync(), Times.Once);
-        _mockRepository.Verify(r => r.FindAsync(It.IsAny<System.Linq.Expressions.Expression<Func<Hotel, bool>>>()), Times.Never);
     }
 
     [Fact]
     public async Task GetAllHotelsForUserAsync_AsRegularAdmin_ShouldReturnOnlyOwnHotels()
     {
-        // Arrange
-        var adminId = "admin-123";
-        var ownHotels = new List<Hotel>
-        {
-            new() { Id = 1, OwnerId = adminId, Name = "My Hotel 1" },
-            new() { Id = 2, OwnerId = adminId, Name = "My Hotel 2" }
-        };
+        await AddHotelAsync("admin-123", "My Hotel 1");
+        await AddHotelAsync("admin-123", "My Hotel 2");
+        await AddHotelAsync("other-admin");
 
-        var ownDtos = new List<HotelDto>
-        {
-            new() { Id = 1, OwnerId = adminId, Name = "My Hotel 1" },
-            new() { Id = 2, OwnerId = adminId, Name = "My Hotel 2" }
-        };
+        var result = await _service.GetAllHotelsForUserAsync("admin-123", isSuperAdmin: false);
 
-        _mockRepository.Setup(r => r.FindAsync(It.IsAny<System.Linq.Expressions.Expression<Func<Hotel, bool>>>()))
-            .ReturnsAsync(ownHotels);
-        _mockMapper.Setup(m => m.Map<IEnumerable<HotelDto>>(ownHotels)).Returns(ownDtos);
-
-        // Act
-        var result = await _service.GetAllHotelsForUserAsync(adminId, isSuperAdmin: false);
-
-        // Assert
         result.Should().HaveCount(2);
-        result.Should().AllSatisfy(h => h.OwnerId.Should().Be(adminId));
-        _mockRepository.Verify(r => r.GetAllAsync(), Times.Never);
-        _mockRepository.Verify(r => r.FindAsync(It.IsAny<System.Linq.Expressions.Expression<Func<Hotel, bool>>>()), Times.Once);
+        result.Should().AllSatisfy(h => h.OwnerId.Should().Be("admin-123"));
     }
 
     #endregion

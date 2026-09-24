@@ -12,38 +12,16 @@ namespace HotelManagement.Services.Implementations
     public class ReportService : IReportService
     {
         private readonly ApplicationDbContext _context;
-        private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IHotelAccessService _hotelAccess;
 
-        public ReportService(ApplicationDbContext context, IHttpContextAccessor httpContextAccessor)
+        public ReportService(ApplicationDbContext context, IHotelAccessService hotelAccess)
         {
             _context = context;
-            _httpContextAccessor = httpContextAccessor;
+            _hotelAccess = hotelAccess;
         }
 
-        private string? GetCurrentUserId() =>
-            _httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier);
-
-        private bool IsSuperAdmin() =>
-            _httpContextAccessor.HttpContext?.User.IsInRole("SuperAdmin") ?? false;
-
-        /// <summary>
-        /// Returns hotel IDs accessible to the current user.
-        /// SuperAdmin sees all hotels; everyone else sees only hotels they own.
-        /// </summary>
-        private async Task<List<int>> GetAccessibleHotelIdsAsync()
-        {
-            if (IsSuperAdmin())
-                return await _context.Hotels.Select(h => h.Id).ToListAsync();
-
-            var userId = GetCurrentUserId();
-            if (string.IsNullOrEmpty(userId))
-                return new List<int>();
-
-            return await _context.Hotels
-                .Where(h => h.OwnerId == userId)
-                .Select(h => h.Id)
-                .ToListAsync();
-        }
+        private async Task<IReadOnlyList<int>> GetAccessibleHotelIdsAsync() =>
+            await _hotelAccess.GetAccessibleHotelIdsAsync();
 
         public async Task<IEnumerable<DailyRevenueDto>> GetDailyRevenueAsync(DateTime startDate, DateTime endDate)
         {

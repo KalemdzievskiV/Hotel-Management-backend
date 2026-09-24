@@ -12,6 +12,7 @@ public interface IRoomService : ICrudService<RoomDto>
     /// Get all rooms for a specific hotel
     /// </summary>
     Task<IEnumerable<RoomDto>> GetRoomsByHotelIdAsync(int hotelId);
+    Task<IEnumerable<RoomDto>> GetRoomsForHotelsAsync(IReadOnlyCollection<int> hotelIds);
     
     /// <summary>
     /// Get rooms by hotel and status

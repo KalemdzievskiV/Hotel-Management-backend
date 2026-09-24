@@ -1,9 +1,11 @@
 using AutoMapper;
+using AutoMapper.QueryableExtensions;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Models.Enums;
 using HotelManagement.Repositories.Interfaces;
 using HotelManagement.Services.Interfaces;
+using Microsoft.EntityFrameworkCore;
 
 namespace HotelManagement.Services.Implementations;
 
@@ -17,6 +19,26 @@ public class RoomService : CrudService<Room, RoomDto>, IRoomService
     {
         _roomRepository = repository;
         _mapper = mapper;
+    }
+
+    /// <summary>
+    /// Projected in SQL so HotelName and TotalReservations are populated
+    /// </summary>
+    public override async Task<RoomDto?> GetByIdAsync(int id)
+    {
+        return await _roomRepository.Query()
+            .Where(r => r.Id == id)
+            .ProjectTo<RoomDto>(_mapper.ConfigurationProvider)
+            .FirstOrDefaultAsync();
+    }
+
+    public async Task<IEnumerable<RoomDto>> GetRoomsForHotelsAsync(IReadOnlyCollection<int> hotelIds)
+    {
+        return await _roomRepository.Query()
+            .Where(r => hotelIds.Contains(r.HotelId))
+            .OrderBy(r => r.HotelId).ThenBy(r => r.RoomNumber)
+            .ProjectTo<RoomDto>(_mapper.ConfigurationProvider)
+            .ToListAsync();
     }
 
     public override async Task<RoomDto> CreateAsync(RoomDto dto)

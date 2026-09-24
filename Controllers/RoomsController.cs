@@ -1,8 +1,5 @@
-using System.Security.Claims;
-using HotelManagement.Authorization.Requirements;
 using HotelManagement.Models.Constants;
 using HotelManagement.Models.DTOs;
-using HotelManagement.Models.Entities;
 using HotelManagement.Models.Enums;
 using HotelManagement.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -11,57 +8,52 @@ using Microsoft.AspNetCore.Mvc;
 namespace HotelManagement.Controllers;
 
 /// <summary>
-/// Controller for managing hotel rooms
+/// Rooms. Read endpoints used for booking (by hotel, availability, by id) are open to any
+/// authenticated user; everything operational is limited to staff of the room's hotel.
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
 public class RoomsController : CrudController<RoomDto>
 {
+    private const string ManagementRoles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}";
+    private const string StaffRoles = $"{ManagementRoles},{AppRoles.Housekeeper}";
+
     private readonly IRoomService _roomService;
-    private readonly IHotelService _hotelService;
     private readonly IReservationService _reservationService;
-    private readonly IAuthorizationService _authorizationService;
+    private readonly IHotelAccessService _hotelAccess;
 
     public RoomsController(
-        IRoomService service, 
-        IHotelService hotelService, 
+        IRoomService service,
         IReservationService reservationService,
-        IAuthorizationService authorizationService) : base(service)
+        IHotelAccessService hotelAccess) : base(service)
     {
         _roomService = service;
-        _hotelService = hotelService;
         _reservationService = reservationService;
-        _authorizationService = authorizationService;
+        _hotelAccess = hotelAccess;
+    }
+
+    private async Task<bool> CanAccessRoomAsync(int roomId)
+    {
+        var hotelId = await _hotelAccess.GetRoomHotelIdAsync(roomId);
+        return hotelId.HasValue && await _hotelAccess.CanAccessHotelAsync(hotelId.Value);
+    }
+
+    private async Task<List<RoomDto>> GetAccessibleRoomsAsync()
+    {
+        var hotelIds = await _hotelAccess.GetAccessibleHotelIdsAsync();
+        return (await _roomService.GetRoomsForHotelsAsync(hotelIds)).ToList();
     }
 
     /// <summary>
-    /// Get all rooms (filtered by user's hotels)
+    /// Rooms across all hotels the user can access
     /// </summary>
     [HttpGet]
-    [Authorize(Policy = "ManagerOrAbove")]
+    [Authorize(Roles = StaffRoles)]
     public override async Task<IActionResult> GetAllAsync()
     {
-        var isSuperAdmin = User.IsInRole(AppRoles.SuperAdmin);
-        
-        if (isSuperAdmin)
-        {
-            // SuperAdmin sees all rooms
-            return Ok(await _roomService.GetAllAsync());
-        }
-        
-        // Admin/Manager sees only rooms from their hotels (service layer filters hotels)
-        var userHotels = await _hotelService.GetAllAsync();
-        var hotelIds = userHotels.Select(h => h.Id).ToList();
-        
-        var allRooms = await _roomService.GetAllAsync();
-        var filteredRooms = allRooms.Where(r => hotelIds.Contains(r.HotelId));
-        
-        return Ok(filteredRooms);
+        return Ok(await GetAccessibleRoomsAsync());
     }
 
-    /// <summary>
-    /// Get room by ID
-    /// </summary>
     [HttpGet("{id:int}")]
     [Authorize]
     public override async Task<IActionResult> GetByIdAsync(int id)
@@ -70,202 +62,135 @@ public class RoomsController : CrudController<RoomDto>
         return room == null ? NotFound() : Ok(room);
     }
 
-    /// <summary>
-    /// Get all rooms for a specific hotel
-    /// </summary>
     [HttpGet("hotel/{hotelId:int}")]
     [Authorize]
     public async Task<IActionResult> GetRoomsByHotelAsync(int hotelId)
     {
-        var rooms = await _roomService.GetRoomsByHotelIdAsync(hotelId);
-        return Ok(rooms);
+        return Ok(await _roomService.GetRoomsByHotelIdAsync(hotelId));
     }
 
-    /// <summary>
-    /// Get available rooms for a specific hotel
-    /// </summary>
     [HttpGet("hotel/{hotelId:int}/available")]
     [Authorize]
     public async Task<IActionResult> GetAvailableRoomsAsync(int hotelId)
     {
-        var rooms = await _roomService.GetAvailableRoomsByHotelAsync(hotelId);
-        return Ok(rooms);
+        return Ok(await _roomService.GetAvailableRoomsByHotelAsync(hotelId));
     }
 
-    /// <summary>
-    /// Get short-stay enabled rooms for a specific hotel
-    /// </summary>
     [HttpGet("hotel/{hotelId:int}/short-stay")]
     [Authorize]
     public async Task<IActionResult> GetShortStayRoomsAsync(int hotelId)
     {
         var allRooms = await _roomService.GetRoomsByHotelIdAsync(hotelId);
-        var shortStayRooms = allRooms.Where(r => r.AllowsShortStay && r.IsActive).ToList();
-        return Ok(shortStayRooms);
+        return Ok(allRooms.Where(r => r.AllowsShortStay && r.IsActive).ToList());
     }
 
-    /// <summary>
-    /// Get rooms by hotel and status
-    /// </summary>
     [HttpGet("hotel/{hotelId:int}/status/{status}")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager},{AppRoles.Housekeeper}")]
+    [Authorize(Roles = StaffRoles)]
     public async Task<IActionResult> GetRoomsByStatusAsync(int hotelId, RoomStatus status)
     {
-        var rooms = await _roomService.GetRoomsByHotelAndStatusAsync(hotelId, status);
-        return Ok(rooms);
+        if (!await _hotelAccess.CanAccessHotelAsync(hotelId))
+            return Forbid();
+
+        return Ok(await _roomService.GetRoomsByHotelAndStatusAsync(hotelId, status));
     }
 
-    /// <summary>
-    /// Create a new room (user must own the hotel)
-    /// </summary>
     [HttpPost]
-    [Authorize(Policy = "ManagerOrAbove")]
+    [Authorize(Roles = ManagementRoles)]
     public override async Task<IActionResult> CreateAsync([FromBody] RoomDto dto)
     {
-        // Check if user has access to this hotel
-        var hotel = await _hotelService.GetByIdAsync(dto.HotelId);
-        if (hotel == null)
-        {
-            return NotFound(new { message = "Hotel not found or you don't have access" });
-        }
-        
-        // Authorization is implicitly checked - if hotel is returned from service, user owns it
+        if (!await _hotelAccess.CanAccessHotelAsync(dto.HotelId))
+            return Forbid();
+
         var created = await _roomService.CreateAsync(dto);
         return CreatedAtAction("GetById", new { id = created.Id }, created);
     }
 
-    /// <summary>
-    /// Update a room (Admin/Manager only)
-    /// </summary>
     [HttpPut("{id:int}")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public override async Task<IActionResult> UpdateAsync(int id, [FromBody] RoomDto dto)
     {
-        var updated = await _roomService.UpdateAsync(id, dto);
-        return Ok(updated);
+        if (!await CanAccessRoomAsync(id))
+            return Forbid();
+
+        return Ok(await _roomService.UpdateAsync(id, dto));
     }
 
-    /// <summary>
-    /// Delete a room (Admin only)
-    /// </summary>
     [HttpDelete("{id:int}")]
     [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin}")]
     public override async Task<IActionResult> DeleteAsync(int id)
     {
+        if (!await CanAccessRoomAsync(id))
+            return Forbid();
+
         await _roomService.DeleteAsync(id);
         return NoContent();
     }
 
-    /// <summary>
-    /// Update room status (Admin/Manager/Housekeeper)
-    /// </summary>
     [HttpPatch("{id:int}/status")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager},{AppRoles.Housekeeper}")]
+    [Authorize(Roles = StaffRoles)]
     public async Task<IActionResult> UpdateRoomStatusAsync(int id, [FromBody] RoomStatusUpdateDto statusDto)
     {
-        var updated = await _roomService.UpdateRoomStatusAsync(id, statusDto.Status);
-        return Ok(updated);
+        if (!await CanAccessRoomAsync(id))
+            return Forbid();
+
+        return Ok(await _roomService.UpdateRoomStatusAsync(id, statusDto.Status));
     }
 
-    /// <summary>
-    /// Mark room as cleaned (Housekeeper/Manager/Admin)
-    /// </summary>
     [HttpPost("{id:int}/clean")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager},{AppRoles.Housekeeper}")]
+    [Authorize(Roles = StaffRoles)]
     public async Task<IActionResult> MarkAsCleanedAsync(int id)
     {
+        if (!await CanAccessRoomAsync(id))
+            return Forbid();
+
         await _roomService.MarkRoomAsCleanedAsync(id);
         return Ok(new { message = "Room marked as cleaned" });
     }
 
-    /// <summary>
-    /// Record maintenance for a room (Admin/Manager)
-    /// </summary>
     [HttpPost("{id:int}/maintenance")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public async Task<IActionResult> RecordMaintenanceAsync(int id, [FromBody] MaintenanceDto maintenanceDto)
     {
+        if (!await CanAccessRoomAsync(id))
+            return Forbid();
+
         await _roomService.RecordMaintenanceAsync(id, maintenanceDto.Notes);
         return Ok(new { message = "Maintenance recorded" });
     }
 
-    /// <summary>
-    /// Get room status summary (filtered by user's hotels)
-    /// </summary>
     [HttpGet("stats/status-summary")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public async Task<IActionResult> GetRoomStatusSummary()
     {
-        var isSuperAdmin = User.IsInRole(AppRoles.SuperAdmin);
-        
-        IEnumerable<RoomDto> rooms;
-        
-        if (isSuperAdmin)
-        {
-            // SuperAdmin sees all rooms
-            rooms = await _roomService.GetAllAsync();
-        }
-        else
-        {
-            // Admin/Manager sees only rooms from their hotels
-            var userHotels = await _hotelService.GetAllAsync();
-            var hotelIds = userHotels.Select(h => h.Id).ToList();
-            
-            var allRooms = await _roomService.GetAllAsync();
-            rooms = allRooms.Where(r => hotelIds.Contains(r.HotelId));
-        }
+        var rooms = await GetAccessibleRoomsAsync();
 
-        // Group rooms by status
         var statusSummary = rooms
             .GroupBy(r => r.Status)
-            .Select(g => new 
-            { 
+            .Select(g => new
+            {
                 Status = g.Key,
                 StatusName = g.Key.ToString(),
-                Count = g.Count() 
+                Count = g.Count()
             })
             .OrderBy(x => x.Status)
             .ToList();
 
-        var totalRooms = rooms.Count();
-
         return Ok(new
         {
-            TotalRooms = totalRooms,
+            TotalRooms = rooms.Count,
             StatusBreakdown = statusSummary
         });
     }
 
-    /// <summary>
-    /// Get current occupancy rate (filtered by user's hotels)
-    /// </summary>
     [HttpGet("stats/occupancy-rate")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public async Task<IActionResult> GetOccupancyRate()
     {
-        var isSuperAdmin = User.IsInRole(AppRoles.SuperAdmin);
-        
-        IEnumerable<RoomDto> rooms;
-        
-        if (isSuperAdmin)
-        {
-            // SuperAdmin sees all rooms
-            rooms = await _roomService.GetAllAsync();
-        }
-        else
-        {
-            // Admin/Manager sees only rooms from their hotels
-            var userHotels = await _hotelService.GetAllAsync();
-            var hotelIds = userHotels.Select(h => h.Id).ToList();
-            
-            var allRooms = await _roomService.GetAllAsync();
-            rooms = allRooms.Where(r => hotelIds.Contains(r.HotelId)).ToList();
-        }
+        var rooms = await GetAccessibleRoomsAsync();
 
-        var totalRooms = rooms.Count();
+        var totalRooms = rooms.Count;
         var occupiedRooms = rooms.Count(r => r.Status == RoomStatus.Occupied);
         var reservedRooms = rooms.Count(r => r.Status == RoomStatus.Reserved);
-        
         // Occupancy includes both Occupied and Reserved rooms
         var effectivelyOccupied = occupiedRooms + reservedRooms;
         var occupancyRate = totalRooms > 0 ? (double)effectivelyOccupied / totalRooms * 100 : 0;
@@ -281,34 +206,13 @@ public class RoomsController : CrudController<RoomDto>
         });
     }
 
-    /// <summary>
-    /// Get occupancy trends (filtered by user's hotels)
-    /// </summary>
     [HttpGet("stats/occupancy-trends")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public async Task<IActionResult> GetOccupancyTrends([FromQuery] int days = 30)
     {
-        var isSuperAdmin = User.IsInRole(AppRoles.SuperAdmin);
-        
-        // Get user's hotels
-        IEnumerable<RoomDto> rooms;
-        List<int> hotelIds;
-        
-        if (isSuperAdmin)
-        {
-            rooms = await _roomService.GetAllAsync();
-            hotelIds = rooms.Select(r => r.HotelId).Distinct().ToList();
-        }
-        else
-        {
-            var userHotels = await _hotelService.GetAllAsync();
-            hotelIds = userHotels.Select(h => h.Id).ToList();
-            
-            var allRooms = await _roomService.GetAllAsync();
-            rooms = allRooms.Where(r => hotelIds.Contains(r.HotelId)).ToList();
-        }
+        var hotelIds = await _hotelAccess.GetAccessibleHotelIdsAsync();
+        var totalRooms = (await _roomService.GetRoomsForHotelsAsync(hotelIds)).Count();
 
-        var totalRooms = rooms.Count();
         if (totalRooms == 0)
         {
             return Ok(new
@@ -320,99 +224,58 @@ public class RoomsController : CrudController<RoomDto>
             });
         }
 
-        // Get all reservations for the user's hotels
-        var allReservations = await _reservationService.GetAllReservationsAsync();
-        var relevantReservations = allReservations
-            .Where(r => hotelIds.Contains(r.HotelId))
-            .ToList();
-
-        // Calculate daily occupancy for the requested period
         var today = DateTime.UtcNow.Date;
         var startDate = today.AddDays(-days);
-        var dailyOccupancy = new List<object>();
-
-        for (var date = startDate; date <= today; date = date.AddDays(1))
-        {
-            var occupiedCount = relevantReservations.Count(r =>
-                r.CheckInDate.Date <= date &&
-                r.CheckOutDate.Date > date &&
-                (r.Status == ReservationStatus.Confirmed || 
-                 r.Status == ReservationStatus.CheckedIn || 
-                 r.Status == ReservationStatus.CheckedOut)
-            );
-
-            var occupancyRate = totalRooms > 0 ? (double)occupiedCount / totalRooms * 100 : 0;
-
-            dailyOccupancy.Add(new
-            {
-                Date = date.ToString("yyyy-MM-dd"),
-                OccupiedRooms = occupiedCount,
-                TotalRooms = totalRooms,
-                OccupancyRate = Math.Round(occupancyRate, 1)
-            });
-        }
-
-        // Calculate current occupancy
-        var currentOccupied = relevantReservations.Count(r =>
-            r.CheckInDate.Date <= today &&
-            r.CheckOutDate.Date > today &&
-            (r.Status == ReservationStatus.Confirmed || r.Status == ReservationStatus.CheckedIn)
-        );
-        var currentOccupancy = totalRooms > 0 ? (double)currentOccupied / totalRooms * 100 : 0;
-
-        // Calculate this month's average
         var thisMonthStart = new DateTime(today.Year, today.Month, 1);
-        var thisMonthData = dailyOccupancy
-            .Cast<dynamic>()
-            .Where(d => DateTime.Parse(d.Date) >= thisMonthStart)
-            .ToList();
-        var thisMonthAverage = thisMonthData.Any() 
-            ? thisMonthData.Average(d => (double)d.OccupancyRate) 
-            : 0;
-
-        // Calculate last month's average
         var lastMonthStart = thisMonthStart.AddMonths(-1);
-        var lastMonthEnd = thisMonthStart.AddDays(-1);
-        var lastMonthOccupancy = new List<double>();
+        var rangeStart = startDate < lastMonthStart ? startDate : lastMonthStart;
 
-        for (var date = lastMonthStart; date <= lastMonthEnd; date = date.AddDays(1))
-        {
-            var occupiedCount = relevantReservations.Count(r =>
+        // Only reservations overlapping the period we report on
+        var reservations = (await _reservationService.GetReservationsByDateRangeAsync(rangeStart, today.AddDays(1), hotelIds))
+            .ToList();
+
+        int OccupiedOn(DateTime date, bool includeCheckedOut) =>
+            reservations.Count(r =>
                 r.CheckInDate.Date <= date &&
                 r.CheckOutDate.Date > date &&
-                (r.Status == ReservationStatus.Confirmed || 
-                 r.Status == ReservationStatus.CheckedIn || 
-                 r.Status == ReservationStatus.CheckedOut)
-            );
+                (r.Status == ReservationStatus.Confirmed ||
+                 r.Status == ReservationStatus.CheckedIn ||
+                 (includeCheckedOut && r.Status == ReservationStatus.CheckedOut)));
 
-            var occupancyRate = totalRooms > 0 ? (double)occupiedCount / totalRooms * 100 : 0;
-            lastMonthOccupancy.Add(occupancyRate);
-        }
+        double Rate(int occupied) => (double)occupied / totalRooms * 100;
 
-        var lastMonthAverage = lastMonthOccupancy.Any() ? lastMonthOccupancy.Average() : 0;
+        var dailyOccupancy = new List<(DateTime Date, int Occupied)>();
+        for (var date = startDate; date <= today; date = date.AddDays(1))
+            dailyOccupancy.Add((date, OccupiedOn(date, includeCheckedOut: true)));
+
+        var thisMonthRates = dailyOccupancy.Where(d => d.Date >= thisMonthStart).Select(d => Rate(d.Occupied)).ToList();
+
+        var lastMonthRates = new List<double>();
+        for (var date = lastMonthStart; date < thisMonthStart; date = date.AddDays(1))
+            lastMonthRates.Add(Rate(OccupiedOn(date, includeCheckedOut: true)));
 
         return Ok(new
         {
-            CurrentOccupancy = Math.Round(currentOccupancy, 1),
-            ThisMonthAverage = Math.Round(thisMonthAverage, 1),
-            LastMonthAverage = Math.Round(lastMonthAverage, 1),
+            CurrentOccupancy = Math.Round(Rate(OccupiedOn(today, includeCheckedOut: false)), 1),
+            ThisMonthAverage = Math.Round(thisMonthRates.Count > 0 ? thisMonthRates.Average() : 0, 1),
+            LastMonthAverage = Math.Round(lastMonthRates.Average(), 1),
             TotalRooms = totalRooms,
-            DailyOccupancy = dailyOccupancy
+            DailyOccupancy = dailyOccupancy.Select(d => new
+            {
+                Date = d.Date.ToString("yyyy-MM-dd"),
+                OccupiedRooms = d.Occupied,
+                TotalRooms = totalRooms,
+                OccupancyRate = Math.Round(Rate(d.Occupied), 1)
+            })
         });
     }
 }
 
-/// <summary>
-/// DTO for updating room status
-/// </summary>
 public class RoomStatusUpdateDto
 {
     public RoomStatus Status { get; set; }
 }
 
-/// <summary>
-/// DTO for recording maintenance
-/// </summary>
 public class MaintenanceDto
 {
     public string Notes { get; set; } = string.Empty;

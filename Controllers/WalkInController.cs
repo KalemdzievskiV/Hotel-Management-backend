@@ -19,12 +19,15 @@ public class WalkInController : ControllerBase
     private readonly IReservationService _reservationService;
     private readonly IGuestService _guestService;
     private readonly ApplicationDbContext _context;
+    private readonly IHotelAccessService _hotelAccess;
 
     public WalkInController(
         IReservationService reservationService,
         IGuestService guestService,
-        ApplicationDbContext context)
+        ApplicationDbContext context,
+        IHotelAccessService hotelAccess)
     {
+        _hotelAccess = hotelAccess;
         _reservationService = reservationService;
         _guestService = guestService;
         _context = context;
@@ -33,6 +36,9 @@ public class WalkInController : ControllerBase
     [HttpGet("available-rooms/{hotelId}")]
     public async Task<IActionResult> GetAvailableRoomsTonight(int hotelId)
     {
+        if (!await _hotelAccess.CanAccessHotelAsync(hotelId))
+            return Forbid();
+
         var today = DateTime.UtcNow.Date;
         var tomorrow = today.AddDays(1);
         var rooms = await _reservationService.GetAvailableRoomsAsync(hotelId, today, tomorrow, BookingType.Daily);
@@ -42,6 +48,9 @@ public class WalkInController : ControllerBase
     [HttpGet("guest-intelligence/{guestId}")]
     public async Task<IActionResult> GetGuestIntelligence(int guestId)
     {
+        if (!await _hotelAccess.CanAccessGuestAsync(guestId))
+            return NotFound();
+
         var guest = await _context.Guests
             .Include(g => g.Reservations).ThenInclude(r => r.Room)
             .FirstOrDefaultAsync(g => g.Id == guestId);
@@ -100,6 +109,12 @@ public class WalkInController : ControllerBase
     [HttpPost("quick-checkin")]
     public async Task<IActionResult> QuickCheckIn([FromBody] QuickCheckInDto dto)
     {
+        if (!await _hotelAccess.CanAccessHotelAsync(dto.HotelId))
+            return Forbid();
+
+        if (dto.ExistingGuestId.HasValue && !await _hotelAccess.CanAccessGuestAsync(dto.ExistingGuestId.Value))
+            return NotFound(new { message = "Guest not found" });
+
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
         // Resolve or create guest
@@ -190,6 +205,9 @@ public class WalkInController : ControllerBase
         var entity = await _context.Reservations.FindAsync(reservationId)
             ?? throw new KeyNotFoundException($"Reservation {reservationId} not found");
 
+        if (!await _hotelAccess.CanAccessHotelAsync(entity.HotelId))
+            return Forbid();
+
         if (entity.Status != ReservationStatus.CheckedIn)
             return BadRequest(new { message = "Reservation must be in CheckedIn status to check out" });
 
@@ -220,6 +238,13 @@ public class WalkInController : ControllerBase
     [HttpPatch("guest-flags/{guestId}")]
     public async Task<IActionResult> UpdateGuestFlags(int guestId, [FromBody] UpdateGuestFlagsDto dto)
     {
+        if (!await _hotelAccess.CanAccessGuestAsync(guestId))
+            return NotFound();
+
+        // Blacklisting is an Admin decision, same as the dedicated Guests endpoints
+        if (dto.IsBlacklisted.HasValue && !User.IsInRole(AppRoles.SuperAdmin) && !User.IsInRole(AppRoles.Admin))
+            return Forbid();
+
         var guest = await _context.Guests.FindAsync(guestId)
             ?? throw new KeyNotFoundException($"Guest {guestId} not found");
 

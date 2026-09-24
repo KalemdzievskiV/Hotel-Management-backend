@@ -1,23 +1,47 @@
+using System.Security.Claims;
 using HotelManagement.Authorization.Requirements;
 using HotelManagement.Data;
+using HotelManagement.Models.Constants;
 using HotelManagement.Models.Entities;
+using HotelManagement.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
-using System.Security.Claims;
 
 namespace HotelManagement.Authorization.Handlers;
 
 /// <summary>
-/// Handler for ReservationAccessRequirement
-/// Controls access to reservations based on hotel ownership or guest ownership
+/// Shared rule: guests may access reservations made for their own guest profile;
+/// staff may access reservations at hotels they can access.
 /// </summary>
+internal static class ReservationAccessRules
+{
+    public static async Task<bool> CanAccessAsync(
+        ClaimsPrincipal user,
+        int reservationHotelId,
+        string? reservationGuestUserId,
+        IHotelAccessService hotelAccess)
+    {
+        var userId = user.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrEmpty(userId))
+            return false;
+
+        if (user.IsInRole(AppRoles.Guest))
+            return reservationGuestUserId == userId;
+
+        var hotelIds = await hotelAccess.GetAccessibleHotelIdsAsync(user);
+        return hotelIds.Contains(reservationHotelId);
+    }
+}
+
 public class ReservationAccessHandler : AuthorizationHandler<ReservationAccessRequirement, Reservation>
 {
     private readonly ApplicationDbContext _context;
+    private readonly IHotelAccessService _hotelAccess;
 
-    public ReservationAccessHandler(ApplicationDbContext context)
+    public ReservationAccessHandler(ApplicationDbContext context, IHotelAccessService hotelAccess)
     {
         _context = context;
+        _hotelAccess = hotelAccess;
     }
 
     protected override async Task HandleRequirementAsync(
@@ -25,62 +49,25 @@ public class ReservationAccessHandler : AuthorizationHandler<ReservationAccessRe
         ReservationAccessRequirement requirement,
         Reservation resource)
     {
-        var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (string.IsNullOrEmpty(userId))
-        {
-            return;
-        }
+        var guestUserId = resource.Guest?.UserId ?? await _context.Guests
+            .Where(g => g.Id == resource.GuestId)
+            .Select(g => g.UserId)
+            .FirstOrDefaultAsync();
 
-        // SuperAdmin has access to all reservations
-        if (context.User.IsInRole("SuperAdmin"))
-        {
+        if (await ReservationAccessRules.CanAccessAsync(context.User, resource.HotelId, guestUserId, _hotelAccess))
             context.Succeed(requirement);
-            return;
-        }
-
-        // Guest: Can only access their own reservations
-        if (context.User.IsInRole("Guest"))
-        {
-            var guest = await _context.Guests
-                .AsNoTracking()
-                .FirstOrDefaultAsync(g => g.UserId == userId);
-
-            if (guest != null && resource.GuestId == guest.Id)
-            {
-                context.Succeed(requirement);
-            }
-            return;
-        }
-
-        // Admin/Manager: Can access reservations in their hotels
-        if (context.User.IsInRole("Admin") || context.User.IsInRole("Manager"))
-        {
-            // Get the hotel for this reservation
-            var room = await _context.Rooms
-                .AsNoTracking()
-                .Include(r => r.Hotel)
-                .FirstOrDefaultAsync(r => r.Id == resource.RoomId);
-
-            if (room?.Hotel != null && room.Hotel.OwnerId == userId)
-            {
-                context.Succeed(requirement);
-            }
-        }
-
-        return;
     }
 }
 
-/// <summary>
-/// Handler for reservation access by reservation ID
-/// </summary>
 public class ReservationAccessByIdHandler : AuthorizationHandler<ReservationAccessRequirement, int>
 {
     private readonly ApplicationDbContext _context;
+    private readonly IHotelAccessService _hotelAccess;
 
-    public ReservationAccessByIdHandler(ApplicationDbContext context)
+    public ReservationAccessByIdHandler(ApplicationDbContext context, IHotelAccessService hotelAccess)
     {
         _context = context;
+        _hotelAccess = hotelAccess;
     }
 
     protected override async Task HandleRequirementAsync(
@@ -88,50 +75,15 @@ public class ReservationAccessByIdHandler : AuthorizationHandler<ReservationAcce
         ReservationAccessRequirement requirement,
         int reservationId)
     {
-        var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (string.IsNullOrEmpty(userId))
-        {
-            return;
-        }
-
-        // SuperAdmin has access to all reservations
-        if (context.User.IsInRole("SuperAdmin"))
-        {
-            context.Succeed(requirement);
-            return;
-        }
-
         var reservation = await _context.Reservations
-            .AsNoTracking()
-            .Include(r => r.Room)
-                .ThenInclude(room => room.Hotel)
-            .Include(r => r.Guest)
-            .FirstOrDefaultAsync(r => r.Id == reservationId);
+            .Where(r => r.Id == reservationId)
+            .Select(r => new { r.HotelId, GuestUserId = r.Guest.UserId })
+            .FirstOrDefaultAsync();
 
         if (reservation == null)
-        {
             return;
-        }
 
-        // Guest: Can only access their own reservations
-        if (context.User.IsInRole("Guest"))
-        {
-            if (reservation.Guest?.UserId == userId)
-            {
-                context.Succeed(requirement);
-            }
-            return;
-        }
-
-        // Admin/Manager: Can access reservations in their hotels
-        if (context.User.IsInRole("Admin") || context.User.IsInRole("Manager"))
-        {
-            if (reservation.Room?.Hotel?.OwnerId == userId)
-            {
-                context.Succeed(requirement);
-            }
-        }
-
-        return;
+        if (await ReservationAccessRules.CanAccessAsync(context.User, reservation.HotelId, reservation.GuestUserId, _hotelAccess))
+            context.Succeed(requirement);
     }
 }

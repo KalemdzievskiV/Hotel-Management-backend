@@ -10,7 +10,7 @@ public interface IGuestService : ICrudService<GuestDto>
     /// <summary>
     /// Search guests by name (first name or last name)
     /// </summary>
-    Task<IEnumerable<GuestDto>> SearchByNameAsync(string searchTerm);
+    Task<IEnumerable<GuestDto>> SearchByNameAsync(string searchTerm, IReadOnlyCollection<int> hotelIds);
     
     /// <summary>
     /// Search guests by email
@@ -30,17 +30,17 @@ public interface IGuestService : ICrudService<GuestDto>
     /// <summary>
     /// Get all VIP guests
     /// </summary>
-    Task<IEnumerable<GuestDto>> GetVIPGuestsAsync();
+    Task<IEnumerable<GuestDto>> GetVIPGuestsAsync(IReadOnlyCollection<int> hotelIds);
     
     /// <summary>
     /// Get all active guests (not blacklisted)
     /// </summary>
-    Task<IEnumerable<GuestDto>> GetActiveGuestsAsync();
+    Task<IEnumerable<GuestDto>> GetActiveGuestsAsync(IReadOnlyCollection<int> hotelIds);
     
     /// <summary>
     /// Get blacklisted guests
     /// </summary>
-    Task<IEnumerable<GuestDto>> GetBlacklistedGuestsAsync();
+    Task<IEnumerable<GuestDto>> GetBlacklistedGuestsAsync(IReadOnlyCollection<int> hotelIds);
     
     /// <summary>
     /// Check if email is unique (for new guest registration)
@@ -76,7 +76,7 @@ public interface IGuestService : ICrudService<GuestDto>
     /// Get all guests accessible to the current user
     /// (Walk-in guests they created + all registered users)
     /// </summary>
-    Task<IEnumerable<GuestDto>> GetMyAccessibleGuestsAsync(string currentUserId);
+    Task<IEnumerable<GuestDto>> GetGuestsForHotelsAsync(IReadOnlyCollection<int> hotelIds);
 
     /// <summary>
     /// Get or create guest profile for a logged-in user

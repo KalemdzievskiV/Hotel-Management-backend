@@ -18,28 +18,29 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
         _client = factory.CreateClient();
     }
 
+    // Guests belong to a hotel; each test's Admin gets a hotel of their own to put guests in
+    private int? _hotelId;
+
     private async Task<string> GetAuthTokenAsync(string role = "Admin")
     {
-        var registerRequest = new RegisterRequestDto
+        var token = await TestAuth.GetTokenAsync(_client, role);
+        if (role == "Admin")
         {
-            FirstName = $"Test{role}",
-            LastName = "Guest",
-            Email = $"testguest{role}{Guid.NewGuid().ToString().Substring(0, 8)}@test.com",
-            Password = "Test123",
-            Role = role
-        };
-
-        await _client.PostAsJsonAsync("/api/Auth/register", registerRequest);
-
-        var loginRequest = new LoginRequestDto
-        {
-            Email = registerRequest.Email,
-            Password = registerRequest.Password
-        };
-
-        var loginResponse = await _client.PostAsJsonAsync("/api/Auth/login", loginRequest);
-        var authResponse = await loginResponse.Content.ReadFromJsonAsync<AuthResponseDto>();
-        return authResponse!.Token;
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/Hotels")
+            {
+                Content = JsonContent.Create(new HotelDto
+                {
+                    Name = $"Guest Test Hotel {Guid.NewGuid():N}",
+                    Address = "1 Test St",
+                    City = "TestCity",
+                    Country = "TestCountry"
+                })
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var response = await _client.SendAsync(request);
+            _hotelId = (await response.Content.ReadFromJsonAsync<HotelDto>())!.Id;
+        }
+        return token;
     }
 
     #region Authorization Tests
@@ -81,6 +82,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
 
         var newGuest = new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "John",
             LastName = "Doe",
             Email = $"john.doe{Guid.NewGuid().ToString().Substring(0, 8)}@example.com",
@@ -117,6 +119,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
 
         var guest1 = new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "John",
             LastName = "Doe",
             Email = email,
@@ -127,6 +130,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
 
         var guest2 = new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "Jane",
             LastName = "Smith",
             Email = email,  // Duplicate
@@ -137,7 +141,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
         var response = await _client.PostAsJsonAsync("/api/Guests", guest2);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.InternalServerError); // Email uniqueness violation
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest); // Email uniqueness violation
     }
 
     [Fact]
@@ -149,6 +153,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
 
         var newGuest = new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "Jane",
             LastName = "Smith",
             Email = $"jane.smith{Guid.NewGuid().ToString().Substring(0, 8)}@example.com",
@@ -177,6 +182,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
 
         var newGuest = new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "Bob",
             LastName = "Johnson",
             Email = $"bob.johnson{Guid.NewGuid().ToString().Substring(0, 8)}@example.com",
@@ -208,6 +214,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
 
         var newGuest = new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "Delete",
             LastName = "Test",
             Email = $"delete.test{Guid.NewGuid().ToString().Substring(0, 8)}@example.com",
@@ -235,10 +242,12 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
         var token = await GetAuthTokenAsync("Admin");
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        var uniqueSurname = $"SearchTest{Guid.NewGuid().ToString().Substring(0, 6)}";
+        // Names may only contain letters, so map GUID hex digits to letters
+        var uniqueSurname = "SearchTest" + new string(Guid.NewGuid().ToString("N")[..6].Select(c => (char)('a' + Convert.ToInt32(c.ToString(), 16))).ToArray());
 
         await _client.PostAsJsonAsync("/api/Guests", new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "Alice",
             LastName = uniqueSurname,
             Email = $"alice{Guid.NewGuid().ToString().Substring(0, 8)}@example.com",
@@ -247,6 +256,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
 
         await _client.PostAsJsonAsync("/api/Guests", new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "Bob",
             LastName = uniqueSurname,
             Email = $"bob{Guid.NewGuid().ToString().Substring(0, 8)}@example.com",
@@ -274,6 +284,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
 
         await _client.PostAsJsonAsync("/api/Guests", new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "Find",
             LastName = "Me",
             Email = email,
@@ -303,6 +314,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
 
         var newGuest = new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "VIP",
             LastName = "Guest",
             Email = $"vip.guest{Guid.NewGuid().ToString().Substring(0, 8)}@example.com",
@@ -335,6 +347,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
         // Create VIP guest
         await _client.PostAsJsonAsync("/api/Guests", new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "VIP",
             LastName = "One",
             Email = $"vip1{Guid.NewGuid().ToString().Substring(0, 8)}@example.com",
@@ -365,6 +378,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
 
         var newGuest = new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "Blacklist",
             LastName = "Test",
             Email = $"blacklist{Guid.NewGuid().ToString().Substring(0, 8)}@example.com",
@@ -396,6 +410,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
 
         var newGuest = new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "Unblacklist",
             LastName = "Test",
             Email = $"unblacklist{Guid.NewGuid().ToString().Substring(0, 8)}@example.com",
@@ -433,6 +448,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
 
         var newGuest = new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "Test",
             LastName = "Guest",
             Email = $"test{Guid.NewGuid().ToString().Substring(0, 8)}@example.com",
@@ -455,6 +471,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
 
         var newGuest = new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "Delete",
             LastName = "Test",
             Email = $"deletetest{Guid.NewGuid().ToString().Substring(0, 8)}@example.com",
@@ -488,6 +505,7 @@ public class GuestsControllerIntegrationTests : IClassFixture<CustomWebApplicati
 
         var comprehensiveGuest = new GuestDto
         {
+            HotelId = _hotelId,
             FirstName = "Michael",
             LastName = "Johnson",
             Email = $"michael.johnson{Guid.NewGuid().ToString().Substring(0, 8)}@example.com",

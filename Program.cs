@@ -77,32 +77,37 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
-// Seed database with roles
+// Apply migrations and seed. Failures here should stop startup rather than leave a half-initialized app.
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
-    try
-    {
-        // Auto-apply any pending EF Core migrations on startup
-        var context = services.GetRequiredService<ApplicationDbContext>();
-        await context.Database.MigrateAsync();
+    var context = services.GetRequiredService<ApplicationDbContext>();
 
-        var roleManager = services.GetRequiredService<RoleManager<IdentityRole>>();
-        await DbSeeder.SeedRolesAsync(roleManager);
-        
-        // Create a default SuperAdmin user for testing
-        var userManager = services.GetRequiredService<UserManager<HotelManagement.Models.Entities.ApplicationUser>>();
-        await DbSeeder.SeedSuperAdminAsync(userManager);
-        
-        // Seed mock data for testing
-        var dbContext = services.GetRequiredService<ApplicationDbContext>();
-        await DbSeeder.SeedMockDataAsync(dbContext, userManager);
-    }
-    catch (Exception ex)
+    // Integration tests run on the in-memory provider, which doesn't support migrations
+    if (context.Database.IsRelational())
+        await context.Database.MigrateAsync();
+    else
+        await context.Database.EnsureCreatedAsync();
+
+    var roleManager = services.GetRequiredService<RoleManager<IdentityRole>>();
+    await DbSeeder.SeedRolesAsync(roleManager);
+
+    var userManager = services.GetRequiredService<UserManager<HotelManagement.Models.Entities.ApplicationUser>>();
+    if (app.Environment.IsProduction())
     {
-        var logger = services.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "An error occurred while seeding the database.");
+        // Never create the well-known default account in production; bootstrap only from explicit config
+        var seedEmail = builder.Configuration["SeedAdmin:Email"];
+        var seedPassword = builder.Configuration["SeedAdmin:Password"];
+        if (!string.IsNullOrEmpty(seedEmail) && !string.IsNullOrEmpty(seedPassword))
+            await DbSeeder.SeedSuperAdminAsync(userManager, seedEmail, seedPassword);
     }
+    else
+    {
+        await DbSeeder.SeedSuperAdminAsync(userManager);
+    }
+
+    if (app.Environment.IsDevelopment())
+        await DbSeeder.SeedMockDataAsync(context, userManager);
 }
 
 // Global exception handling - must be first

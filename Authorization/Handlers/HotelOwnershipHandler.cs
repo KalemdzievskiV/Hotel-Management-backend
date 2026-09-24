@@ -1,23 +1,21 @@
 using HotelManagement.Authorization.Requirements;
-using HotelManagement.Data;
 using HotelManagement.Models.Entities;
+using HotelManagement.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.EntityFrameworkCore;
-using System.Security.Claims;
 
 namespace HotelManagement.Authorization.Handlers;
 
 /// <summary>
-/// Handler for HotelOwnershipRequirement
-/// Checks if user has access to view/use a hotel's resources
+/// Grants access to a hotel's operational data when the user can access that hotel
+/// (see <see cref="IHotelAccessService"/> for the rules).
 /// </summary>
 public class HotelOwnershipHandler : AuthorizationHandler<HotelOwnershipRequirement, Hotel>
 {
-    private readonly ApplicationDbContext _context;
+    private readonly IHotelAccessService _hotelAccess;
 
-    public HotelOwnershipHandler(ApplicationDbContext context)
+    public HotelOwnershipHandler(IHotelAccessService hotelAccess)
     {
-        _context = context;
+        _hotelAccess = hotelAccess;
     }
 
     protected override async Task HandleRequirementAsync(
@@ -25,45 +23,22 @@ public class HotelOwnershipHandler : AuthorizationHandler<HotelOwnershipRequirem
         HotelOwnershipRequirement requirement,
         Hotel resource)
     {
-        var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (string.IsNullOrEmpty(userId))
-        {
-            return;
-        }
-
-        // SuperAdmin has access to all hotels
-        if (context.User.IsInRole("SuperAdmin"))
-        {
+        var hotelIds = await _hotelAccess.GetAccessibleHotelIdsAsync(context.User);
+        if (hotelIds.Contains(resource.Id))
             context.Succeed(requirement);
-            return;
-        }
-
-        // Admin/Manager: Check if they own the hotel
-        if (context.User.IsInRole("Admin") || context.User.IsInRole("Manager"))
-        {
-            if (resource.OwnerId == userId)
-            {
-                context.Succeed(requirement);
-                return;
-            }
-        }
-
-        // If we reach here, user doesn't have access
-        return;
     }
 }
 
 /// <summary>
-/// Handler for checking hotel ownership by hotel ID
-/// Used when we only have the hotel ID, not the full entity
+/// Same as <see cref="HotelOwnershipHandler"/> but takes the hotel ID as the resource.
 /// </summary>
 public class HotelOwnershipByIdHandler : AuthorizationHandler<HotelOwnershipRequirement, int>
 {
-    private readonly ApplicationDbContext _context;
+    private readonly IHotelAccessService _hotelAccess;
 
-    public HotelOwnershipByIdHandler(ApplicationDbContext context)
+    public HotelOwnershipByIdHandler(IHotelAccessService hotelAccess)
     {
-        _context = context;
+        _hotelAccess = hotelAccess;
     }
 
     protected override async Task HandleRequirementAsync(
@@ -71,33 +46,8 @@ public class HotelOwnershipByIdHandler : AuthorizationHandler<HotelOwnershipRequ
         HotelOwnershipRequirement requirement,
         int hotelId)
     {
-        var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (string.IsNullOrEmpty(userId))
-        {
-            return;
-        }
-
-        // SuperAdmin has access to all hotels
-        if (context.User.IsInRole("SuperAdmin"))
-        {
+        var hotelIds = await _hotelAccess.GetAccessibleHotelIdsAsync(context.User);
+        if (hotelIds.Contains(hotelId))
             context.Succeed(requirement);
-            return;
-        }
-
-        // Admin/Manager: Check if they own the hotel
-        if (context.User.IsInRole("Admin") || context.User.IsInRole("Manager"))
-        {
-            var hotel = await _context.Hotels
-                .AsNoTracking()
-                .FirstOrDefaultAsync(h => h.Id == hotelId);
-
-            if (hotel != null && hotel.OwnerId == userId)
-            {
-                context.Succeed(requirement);
-                return;
-            }
-        }
-
-        return;
     }
 }

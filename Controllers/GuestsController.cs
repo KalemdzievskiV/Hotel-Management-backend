@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using HotelManagement.Models.Constants;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Services.Interfaces;
@@ -7,38 +8,36 @@ using Microsoft.AspNetCore.Mvc;
 namespace HotelManagement.Controllers;
 
 /// <summary>
-/// Controller for managing hotel guests
+/// Guest records. Staff only see guests belonging to their hotels (walk-ins created there
+/// or guests with a reservation there); see GuestQueries.VisibleToHotels.
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
 public class GuestsController : CrudController<GuestDto>
 {
-    private readonly IGuestService _guestService;
+    private const string ManagementRoles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}";
+    private const string AdminRoles = $"{AppRoles.SuperAdmin},{AppRoles.Admin}";
 
-    public GuestsController(IGuestService service) : base(service)
+    private readonly IGuestService _guestService;
+    private readonly IHotelAccessService _hotelAccess;
+
+    public GuestsController(IGuestService service, IHotelAccessService hotelAccess) : base(service)
     {
         _guestService = service;
+        _hotelAccess = hotelAccess;
     }
 
     /// <summary>
-    /// Get all guests accessible to current user
-    /// (Walk-in guests they created + all registered users)
+    /// Guests of the hotels the current user works at
     /// </summary>
     [HttpGet]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public override async Task<IActionResult> GetAllAsync()
     {
-        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        if (string.IsNullOrEmpty(userId))
-            return Unauthorized();
-        
-        var guests = await _guestService.GetMyAccessibleGuestsAsync(userId);
-        return Ok(guests);
+        var hotelIds = await _hotelAccess.GetAccessibleHotelIdsAsync();
+        return Ok(await _guestService.GetGuestsForHotelsAsync(hotelIds));
     }
-    
-    /// <summary>
-    /// Get all guests (SuperAdmin only - no filtering)
-    /// </summary>
+
     [HttpGet("all-unfiltered")]
     [Authorize(Roles = AppRoles.SuperAdmin)]
     public async Task<IActionResult> GetAllUnfilteredAsync()
@@ -46,206 +45,186 @@ public class GuestsController : CrudController<GuestDto>
         return Ok(await _guestService.GetAllAsync());
     }
 
-    /// <summary>
-    /// Get guest by ID
-    /// </summary>
     [HttpGet("{id:int}")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public override async Task<IActionResult> GetByIdAsync(int id)
     {
+        if (!await _hotelAccess.CanAccessGuestAsync(id))
+            return NotFound();
+
         var guest = await _guestService.GetByIdAsync(id);
         return guest == null ? NotFound() : Ok(guest);
     }
 
     /// <summary>
-    /// Create a new guest (Admin/Manager only)
+    /// Create a walk-in guest for one of the user's hotels
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public override async Task<IActionResult> CreateAsync([FromBody] GuestDto dto)
     {
+        if (!dto.HotelId.HasValue)
+            return BadRequest(new { message = "A hotel must be selected for the guest" });
+
+        if (!await _hotelAccess.CanAccessHotelAsync(dto.HotelId.Value))
+            return Forbid();
+
         var created = await _guestService.CreateAsync(dto);
         return CreatedAtAction("GetById", new { id = created.Id }, created);
     }
 
-    /// <summary>
-    /// Update a guest (Admin/Manager only)
-    /// </summary>
     [HttpPut("{id:int}")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public override async Task<IActionResult> UpdateAsync(int id, [FromBody] GuestDto dto)
     {
-        var updated = await _guestService.UpdateAsync(id, dto);
-        return Ok(updated);
+        if (!await _hotelAccess.CanAccessGuestAsync(id))
+            return NotFound();
+
+        return Ok(await _guestService.UpdateAsync(id, dto));
     }
 
-    /// <summary>
-    /// Delete a guest (Admin only)
-    /// </summary>
     [HttpDelete("{id:int}")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin}")]
+    [Authorize(Roles = AdminRoles)]
     public override async Task<IActionResult> DeleteAsync(int id)
     {
+        if (!await _hotelAccess.CanAccessGuestAsync(id))
+            return NotFound();
+
         await _guestService.DeleteAsync(id);
         return NoContent();
     }
 
-    /// <summary>
-    /// Search guests by name
-    /// </summary>
     [HttpGet("search")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public async Task<IActionResult> SearchByNameAsync([FromQuery] string name)
     {
         if (string.IsNullOrWhiteSpace(name))
-            return BadRequest("Search term cannot be empty");
+            return BadRequest(new { message = "Search term cannot be empty" });
 
-        var guests = await _guestService.SearchByNameAsync(name);
-        return Ok(guests);
+        var hotelIds = await _hotelAccess.GetAccessibleHotelIdsAsync();
+        return Ok(await _guestService.SearchByNameAsync(name, hotelIds));
     }
 
-    /// <summary>
-    /// Get guest by email
-    /// </summary>
     [HttpGet("email/{email}")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public async Task<IActionResult> GetByEmailAsync(string email)
     {
         var guest = await _guestService.GetByEmailAsync(email);
-        return guest == null ? NotFound() : Ok(guest);
+        if (guest == null || !await _hotelAccess.CanAccessGuestAsync(guest.Id))
+            return NotFound();
+
+        return Ok(guest);
     }
 
-    /// <summary>
-    /// Get guest by phone number
-    /// </summary>
     [HttpGet("phone/{phoneNumber}")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public async Task<IActionResult> GetByPhoneNumberAsync(string phoneNumber)
     {
         var guest = await _guestService.GetByPhoneNumberAsync(phoneNumber);
-        return guest == null ? NotFound() : Ok(guest);
+        if (guest == null || !await _hotelAccess.CanAccessGuestAsync(guest.Id))
+            return NotFound();
+
+        return Ok(guest);
     }
 
-    /// <summary>
-    /// Get all VIP guests
-    /// </summary>
     [HttpGet("vip")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public async Task<IActionResult> GetVIPGuestsAsync()
     {
-        var guests = await _guestService.GetVIPGuestsAsync();
-        return Ok(guests);
+        var hotelIds = await _hotelAccess.GetAccessibleHotelIdsAsync();
+        return Ok(await _guestService.GetVIPGuestsAsync(hotelIds));
     }
 
-    /// <summary>
-    /// Get all active guests (not blacklisted)
-    /// </summary>
     [HttpGet("active")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public async Task<IActionResult> GetActiveGuestsAsync()
     {
-        var guests = await _guestService.GetActiveGuestsAsync();
-        return Ok(guests);
+        var hotelIds = await _hotelAccess.GetAccessibleHotelIdsAsync();
+        return Ok(await _guestService.GetActiveGuestsAsync(hotelIds));
     }
 
-    /// <summary>
-    /// Get blacklisted guests (Admin only)
-    /// </summary>
     [HttpGet("blacklisted")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin}")]
+    [Authorize(Roles = AdminRoles)]
     public async Task<IActionResult> GetBlacklistedGuestsAsync()
     {
-        var guests = await _guestService.GetBlacklistedGuestsAsync();
-        return Ok(guests);
+        var hotelIds = await _hotelAccess.GetAccessibleHotelIdsAsync();
+        return Ok(await _guestService.GetBlacklistedGuestsAsync(hotelIds));
     }
 
-    /// <summary>
-    /// Blacklist a guest (Admin only)
-    /// </summary>
     [HttpPost("{id:int}/blacklist")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin}")]
+    [Authorize(Roles = AdminRoles)]
     public async Task<IActionResult> BlacklistGuestAsync(int id, [FromBody] BlacklistRequest request)
     {
+        if (!await _hotelAccess.CanAccessGuestAsync(id))
+            return NotFound();
+
         await _guestService.BlacklistGuestAsync(id, request.Reason);
         return Ok(new { message = "Guest blacklisted successfully" });
     }
 
-    /// <summary>
-    /// Remove guest from blacklist (Admin only)
-    /// </summary>
     [HttpPost("{id:int}/unblacklist")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin}")]
+    [Authorize(Roles = AdminRoles)]
     public async Task<IActionResult> UnblacklistGuestAsync(int id)
     {
+        if (!await _hotelAccess.CanAccessGuestAsync(id))
+            return NotFound();
+
         await _guestService.UnblacklistGuestAsync(id);
         return Ok(new { message = "Guest removed from blacklist" });
     }
 
-    /// <summary>
-    /// Set VIP status (Admin/Manager only)
-    /// </summary>
     [HttpPatch("{id:int}/vip")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public async Task<IActionResult> SetVIPStatusAsync(int id, [FromBody] VIPStatusRequest request)
     {
+        if (!await _hotelAccess.CanAccessGuestAsync(id))
+            return NotFound();
+
         await _guestService.SetVIPStatusAsync(id, request.IsVIP);
         return Ok(new { message = $"Guest VIP status updated to {request.IsVIP}" });
     }
-    
-    /// <summary>
-    /// Get all walk-in guests for a specific hotel
-    /// </summary>
+
     [HttpGet("hotel/{hotelId:int}")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public async Task<IActionResult> GetGuestsByHotelAsync(int hotelId)
     {
-        var guests = await _guestService.GetGuestsByHotelIdAsync(hotelId);
-        return Ok(guests);
+        if (!await _hotelAccess.CanAccessHotelAsync(hotelId))
+            return Forbid();
+
+        return Ok(await _guestService.GetGuestsByHotelIdAsync(hotelId));
     }
-    
-    /// <summary>
-    /// Get all walk-in guests created by current user
-    /// </summary>
+
     [HttpGet("my-guests")]
-    [Authorize(Roles = $"{AppRoles.SuperAdmin},{AppRoles.Admin},{AppRoles.Manager}")]
+    [Authorize(Roles = ManagementRoles)]
     public async Task<IActionResult> GetMyGuestsAsync()
     {
-        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (string.IsNullOrEmpty(userId))
             return Unauthorized();
-        
-        var guests = await _guestService.GetGuestsCreatedByUserAsync(userId);
-        return Ok(guests);
+
+        return Ok(await _guestService.GetGuestsCreatedByUserAsync(userId));
     }
 
     /// <summary>
-    /// Get or create guest profile for current logged-in user
-    /// This allows guest users to get their GuestId for making reservations
+    /// The current user's own guest profile, created from their account on first use
     /// </summary>
     [HttpGet("me")]
-    [Authorize] // Any authenticated user
+    [Authorize]
     public async Task<IActionResult> GetOrCreateMyGuestProfileAsync()
     {
-        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (string.IsNullOrEmpty(userId))
             return Unauthorized();
 
-        var guest = await _guestService.GetOrCreateGuestProfileAsync(userId);
-        return Ok(guest);
+        return Ok(await _guestService.GetOrCreateGuestProfileAsync(userId));
     }
 }
 
-/// <summary>
-/// DTO for blacklisting a guest
-/// </summary>
 public class BlacklistRequest
 {
     public string Reason { get; set; } = string.Empty;
 }
 
-/// <summary>
-/// DTO for updating VIP status
-/// </summary>
 public class VIPStatusRequest
 {
     public bool IsVIP { get; set; }

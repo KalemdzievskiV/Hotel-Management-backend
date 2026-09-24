@@ -7,4 +7,5 @@ public interface IHotelService : ICrudService<HotelDto>
     Task<IEnumerable<HotelDto>> GetHotelsByOwnerAsync(string ownerId);
     Task<IEnumerable<HotelDto>> GetAllHotelsForUserAsync(string userId, bool isSuperAdmin);
     Task<IEnumerable<HotelDto>> GetAllHotelsUnfilteredAsync();
+    Task<HotelDto?> GetByIdUnfilteredAsync(int id);
 }

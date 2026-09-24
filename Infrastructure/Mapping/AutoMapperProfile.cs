@@ -10,7 +10,7 @@ namespace HotelManagement.Infrastructure.Mapping
         {
             // Hotel mappings
             CreateMap<Hotel, HotelDto>()
-                .ForMember(dest => dest.OwnerName, opt => opt.MapFrom(src => src.Owner != null ? src.Owner.FullName : null))
+                .ForMember(dest => dest.OwnerName, opt => opt.MapFrom(src => src.Owner != null ? src.Owner.FirstName + " " + src.Owner.LastName : null))
                 .ForMember(dest => dest.TotalRooms, opt => opt.MapFrom(src => src.Rooms.Count))
                 .ForMember(dest => dest.TotalReservations, opt => opt.MapFrom(src => src.Reservations.Count));
             
@@ -53,7 +53,11 @@ namespace HotelManagement.Infrastructure.Mapping
                 .ForMember(dest => dest.UpdatedAt, opt => opt.Ignore()) // Set in service
                 .ForMember(dest => dest.LastStayDate, opt => opt.Ignore()) // Managed separately
                 .ForMember(dest => dest.CreatedByUserId, opt => opt.Ignore()) // Set in service
-                .ForMember(dest => dest.HotelId, opt => opt.Ignore()); // Controlled in service
+                .ForMember(dest => dest.HotelId, opt => opt.Ignore()) // Controlled in service
+                // Account links and blacklisting change only through their dedicated flows
+                .ForMember(dest => dest.UserId, opt => opt.Ignore())
+                .ForMember(dest => dest.IsBlacklisted, opt => opt.Ignore())
+                .ForMember(dest => dest.BlacklistReason, opt => opt.Ignore());
             
             // Reservation mappings (manual mapping used in service, but configured for consistency)
             CreateMap<Reservation, ReservationDto>()

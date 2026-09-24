@@ -18,33 +18,8 @@ public class HotelsControllerIntegrationTests : IClassFixture<CustomWebApplicati
         _client = factory.CreateClient();
     }
 
-    private async Task<string> GetAuthTokenAsync(string role = "Admin")
-    {
-        var registerRequest = new RegisterRequestDto
-        {
-            FirstName = $"Test",
-            LastName = role,
-            Email = $"test{role}@test.com",
-            Password = "Test123",
-            Role = role
-        };
-
-        var response = await _client.PostAsJsonAsync("/api/Auth/register", registerRequest);
-        
-        if (response.StatusCode == HttpStatusCode.BadRequest)
-        {
-            // User might already exist, try login
-            var loginRequest = new LoginRequestDto
-            {
-                Email = registerRequest.Email,
-                Password = registerRequest.Password
-            };
-            response = await _client.PostAsJsonAsync("/api/Auth/login", loginRequest);
-        }
-
-        var authResponse = await response.Content.ReadFromJsonAsync<AuthResponseDto>();
-        return authResponse!.Token;
-    }
+    private Task<string> GetAuthTokenAsync(string role = "Admin") =>
+        TestAuth.GetTokenAsync(_client, role, $"test{role}@test.com");
 
     [Fact]
     public async Task GetAllHotels_WithoutAuth_ShouldReturnUnauthorized()
@@ -60,7 +35,7 @@ public class HotelsControllerIntegrationTests : IClassFixture<CustomWebApplicati
     public async Task GetAllHotels_WithAuth_ShouldReturnOk()
     {
         // Arrange
-        var token = await GetAuthTokenAsync("Guest");
+        var token = await GetAuthTokenAsync("Admin");
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         // Act

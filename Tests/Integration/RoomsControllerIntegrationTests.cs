@@ -19,29 +19,8 @@ public class RoomsControllerIntegrationTests : IClassFixture<CustomWebApplicatio
         _client = factory.CreateClient();
     }
 
-    private async Task<string> GetAuthTokenAsync(string role = "Admin")
-    {
-        var registerRequest = new RegisterRequestDto
-        {
-            FirstName = $"Test{role}",
-            LastName = "Room",
-            Email = $"testroom{role}{Guid.NewGuid().ToString().Substring(0, 8)}@test.com",
-            Password = "Test123",
-            Role = role
-        };
-
-        await _client.PostAsJsonAsync("/api/Auth/register", registerRequest);
-
-        var loginRequest = new LoginRequestDto
-        {
-            Email = registerRequest.Email,
-            Password = registerRequest.Password
-        };
-
-        var loginResponse = await _client.PostAsJsonAsync("/api/Auth/login", loginRequest);
-        var authResponse = await loginResponse.Content.ReadFromJsonAsync<AuthResponseDto>();
-        return authResponse!.Token;
-    }
+    private Task<string> GetAuthTokenAsync(string role = "Admin") =>
+        TestAuth.GetTokenAsync(_client, role);
 
     private async Task<HotelDto> CreateTestHotelAsync(string token)
     {
@@ -153,7 +132,7 @@ public class RoomsControllerIntegrationTests : IClassFixture<CustomWebApplicatio
 
         // Assert
         // InvalidOperationException returns 500 (we could change to custom exception for 400)
-        response.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
@@ -345,8 +324,10 @@ public class RoomsControllerIntegrationTests : IClassFixture<CustomWebApplicatio
     public async Task UpdateRoomStatus_WithManagerRole_ShouldSucceed()
     {
         // Arrange
-        var token = await GetAuthTokenAsync("Manager");
-        var hotel = await CreateTestHotelAsync(token);
+        // Managers work at the hotel they're assigned to, so an Admin creates it first
+        var hotel = await CreateTestHotelAsync(await GetAuthTokenAsync("Admin"));
+        var token = await TestAuth.GetTokenAsync(_client, "Manager", hotelId: hotel.Id);
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         var room = new RoomDto
         {
@@ -393,7 +374,7 @@ public class RoomsControllerIntegrationTests : IClassFixture<CustomWebApplicatio
         var createdRoom = await createResponse.Content.ReadFromJsonAsync<RoomDto>();
 
         // Switch to Housekeeper role
-        var housekeeperToken = await GetAuthTokenAsync("Housekeeper");
+        var housekeeperToken = await TestAuth.GetTokenAsync(_client, "Housekeeper", hotelId: hotel.Id);
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", housekeeperToken);
 
         // Act
@@ -407,8 +388,10 @@ public class RoomsControllerIntegrationTests : IClassFixture<CustomWebApplicatio
     public async Task RecordMaintenance_WithManagerRole_ShouldSucceed()
     {
         // Arrange
-        var token = await GetAuthTokenAsync("Manager");
-        var hotel = await CreateTestHotelAsync(token);
+        // Managers work at the hotel they're assigned to, so an Admin creates it first
+        var hotel = await CreateTestHotelAsync(await GetAuthTokenAsync("Admin"));
+        var token = await TestAuth.GetTokenAsync(_client, "Manager", hotelId: hotel.Id);
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         var room = new RoomDto
         {

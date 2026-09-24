@@ -650,7 +650,7 @@ public class ReservationServiceTests
         await _context.SaveChangesAsync();
 
         // Act
-        var result = await _service.GetTotalRevenueAsync();
+        var result = await _service.GetTotalRevenueAsync(new[] { 1 });
 
         // Assert
         Assert.Equal(300, result); // Only checked-out reservation

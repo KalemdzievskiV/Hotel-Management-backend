@@ -11,17 +11,19 @@ public interface IReservationService
     // CRUD Operations
     Task<ReservationDto> CreateReservationAsync(CreateReservationDto createDto);
     Task<ReservationDto?> GetReservationByIdAsync(int id);
-    Task<IEnumerable<ReservationDto>> GetAllReservationsAsync();
+    Task<IEnumerable<ReservationDto>> GetReservationsForHotelsAsync(IReadOnlyCollection<int> hotelIds);
     Task<ReservationDto> UpdateReservationAsync(int id, UpdateReservationDto updateDto);
     Task DeleteReservationAsync(int id);
     
     // Query Operations
     Task<IEnumerable<ReservationDto>> GetReservationsByHotelAsync(int hotelId);
     Task<IEnumerable<ReservationDto>> GetReservationsByRoomAsync(int roomId);
-    Task<IEnumerable<ReservationDto>> GetReservationsByGuestAsync(int guestId);
-    Task<IEnumerable<ReservationDto>> GetReservationsByStatusAsync(ReservationStatus status);
-    Task<IEnumerable<ReservationDto>> GetReservationsByDateRangeAsync(DateTime startDate, DateTime endDate);
-    Task<IEnumerable<ReservationDto>> GetUserReservationsAsync(string userId);
+    Task<IEnumerable<ReservationDto>> GetReservationsByGuestAsync(int guestId, IReadOnlyCollection<int> hotelIds);
+    Task<IEnumerable<ReservationDto>> GetReservationsByStatusAsync(ReservationStatus status, IReadOnlyCollection<int> hotelIds);
+    Task<IEnumerable<ReservationDto>> GetReservationsByDateRangeAsync(DateTime startDate, DateTime endDate, IReadOnlyCollection<int> hotelIds);
+    Task<IEnumerable<ReservationDto>> GetGuestUserReservationsAsync(string userId);
+    Task<IEnumerable<ReservationDto>> GetCheckInsOnAsync(DateTime day, IReadOnlyCollection<int> hotelIds);
+    Task<IEnumerable<ReservationDto>> GetCheckOutsOnAsync(DateTime day, IReadOnlyCollection<int> hotelIds);
     
     // Room Availability
     Task<bool> IsRoomAvailableAsync(int roomId, DateTime checkIn, DateTime checkOut, int? excludeReservationId = null);
@@ -40,8 +42,8 @@ public interface IReservationService
     Task<ReservationDto> RecordRefundAsync(int id, decimal amount, string? reason = null);
     
     // Statistics
-    Task<int> GetTotalReservationsCountAsync();
-    Task<decimal> GetTotalRevenueAsync();
-    Task<Dictionary<ReservationStatus, int>> GetReservationCountByStatusAsync();
-    Task<Dictionary<string, int>> GetReservationCountByMonthAsync(int year);
+    Task<int> GetTotalReservationsCountAsync(IReadOnlyCollection<int> hotelIds);
+    Task<decimal> GetTotalRevenueAsync(IReadOnlyCollection<int> hotelIds);
+    Task<Dictionary<ReservationStatus, int>> GetReservationCountByStatusAsync(IReadOnlyCollection<int> hotelIds);
+    Task<Dictionary<string, int>> GetReservationCountByMonthAsync(int year, IReadOnlyCollection<int> hotelIds);
 }

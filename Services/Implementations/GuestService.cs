@@ -1,5 +1,6 @@
 using AutoMapper;
 using HotelManagement.Data;
+using HotelManagement.Infrastructure.Queries;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Repositories.Interfaces;
@@ -42,21 +43,10 @@ public class GuestService : CrudService<Guest, GuestDto>, IGuestService
         var guest = _mapper.Map<Guest>(dto);
         guest.CreatedAt = DateTime.UtcNow;
         
-        // If this is a walk-in guest (UserId is null), set ownership
-        if (string.IsNullOrEmpty(dto.UserId))
-        {
-            var currentUserId = _httpContextAccessor.HttpContext?.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!string.IsNullOrEmpty(currentUserId))
-            {
-                guest.CreatedByUserId = currentUserId;
-            }
-            
-            // Set HotelId if provided
-            if (dto.HotelId.HasValue)
-            {
-                guest.HotelId = dto.HotelId.Value;
-            }
-        }
+        // Guests created here are walk-ins owned by a hotel; registered guests get their
+        // profile through GetOrCreateGuestProfileAsync instead
+        guest.CreatedByUserId = _httpContextAccessor.HttpContext?.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        guest.HotelId = dto.HotelId;
 
         await _guestRepository.AddAsync(guest);
         await _guestRepository.SaveAsync();
@@ -89,14 +79,15 @@ public class GuestService : CrudService<Guest, GuestDto>, IGuestService
         return _mapper.Map<GuestDto>(existingGuest);
     }
 
-    public async Task<IEnumerable<GuestDto>> SearchByNameAsync(string searchTerm)
+    public async Task<IEnumerable<GuestDto>> SearchByNameAsync(string searchTerm, IReadOnlyCollection<int> hotelIds)
     {
-        var pattern = $"%{searchTerm}%";
-        var guests = await _guestRepository.FindAsync(g =>
-            EF.Functions.ILike(g.FirstName, pattern) ||
-            EF.Functions.ILike(g.LastName, pattern) ||
-            EF.Functions.ILike(g.Email, pattern) ||
-            EF.Functions.ILike(g.PhoneNumber, pattern));
+        // ToLower().Contains() translates to a case-insensitive LIKE on Postgres and also runs on the in-memory test provider
+        var term = searchTerm.ToLower();
+        var guests = await _guestRepository.FindAsync(GuestQueries.VisibleToHotels(hotelIds).And(g =>
+            g.FirstName.ToLower().Contains(term) ||
+            g.LastName.ToLower().Contains(term) ||
+            g.Email.ToLower().Contains(term) ||
+            g.PhoneNumber.ToLower().Contains(term)));
 
         return _mapper.Map<IEnumerable<GuestDto>>(guests);
     }
@@ -125,21 +116,24 @@ public class GuestService : CrudService<Guest, GuestDto>, IGuestService
         return guest == null ? null : _mapper.Map<GuestDto>(guest);
     }
 
-    public async Task<IEnumerable<GuestDto>> GetVIPGuestsAsync()
+    public async Task<IEnumerable<GuestDto>> GetVIPGuestsAsync(IReadOnlyCollection<int> hotelIds)
     {
-        var guests = await _guestRepository.FindAsync(g => g.IsVIP && g.IsActive && !g.IsBlacklisted);
+        var guests = await _guestRepository.FindAsync(
+            GuestQueries.VisibleToHotels(hotelIds).And(g => g.IsVIP && g.IsActive && !g.IsBlacklisted));
         return _mapper.Map<IEnumerable<GuestDto>>(guests);
     }
 
-    public async Task<IEnumerable<GuestDto>> GetActiveGuestsAsync()
+    public async Task<IEnumerable<GuestDto>> GetActiveGuestsAsync(IReadOnlyCollection<int> hotelIds)
     {
-        var guests = await _guestRepository.FindAsync(g => g.IsActive && !g.IsBlacklisted);
+        var guests = await _guestRepository.FindAsync(
+            GuestQueries.VisibleToHotels(hotelIds).And(g => g.IsActive && !g.IsBlacklisted));
         return _mapper.Map<IEnumerable<GuestDto>>(guests);
     }
 
-    public async Task<IEnumerable<GuestDto>> GetBlacklistedGuestsAsync()
+    public async Task<IEnumerable<GuestDto>> GetBlacklistedGuestsAsync(IReadOnlyCollection<int> hotelIds)
     {
-        var guests = await _guestRepository.FindAsync(g => g.IsBlacklisted);
+        var guests = await _guestRepository.FindAsync(
+            GuestQueries.VisibleToHotels(hotelIds).And(g => g.IsBlacklisted));
         return _mapper.Map<IEnumerable<GuestDto>>(guests);
     }
 
@@ -208,13 +202,9 @@ public class GuestService : CrudService<Guest, GuestDto>, IGuestService
         return _mapper.Map<IEnumerable<GuestDto>>(guests);
     }
 
-    public async Task<IEnumerable<GuestDto>> GetMyAccessibleGuestsAsync(string currentUserId)
+    public async Task<IEnumerable<GuestDto>> GetGuestsForHotelsAsync(IReadOnlyCollection<int> hotelIds)
     {
-        // Get walk-in guests created by this user + all registered users (UserId != null)
-        var guests = await _guestRepository.FindAsync(g => 
-            g.CreatedByUserId == currentUserId || // Walk-in guests I created
-            g.UserId != null); // All registered users (available to everyone)
-        
+        var guests = await _guestRepository.FindAsync(GuestQueries.VisibleToHotels(hotelIds));
         return _mapper.Map<IEnumerable<GuestDto>>(guests);
     }
 
