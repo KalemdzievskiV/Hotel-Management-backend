@@ -1,4 +1,5 @@
 using HotelManagement.Data;
+using HotelManagement.Infrastructure.Exceptions;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Models.Enums;
@@ -51,8 +52,24 @@ public class HousekeepingService : IHousekeepingService
         return task == null ? null : MapToDto(task);
     }
 
+    /// <summary>
+    /// Tasks can only go to active staff of the room's hotel (assigned to it, or its owner)
+    /// </summary>
+    private async Task EnsureCanBeAssignedAsync(string assigneeId, int roomId)
+    {
+        var hotelId = await _context.Rooms.Where(r => r.Id == roomId).Select(r => r.HotelId).FirstAsync();
+        var worksThere = await _context.Users.AnyAsync(u => u.Id == assigneeId && u.IsActive &&
+            (u.HotelId == hotelId || _context.Hotels.Any(h => h.Id == hotelId && h.OwnerId == u.Id)));
+
+        if (!worksThere)
+            throw new BusinessRuleException("Tasks can only be assigned to active staff of this hotel");
+    }
+
     public async Task<HousekeepingTaskDto> CreateTaskAsync(CreateHousekeepingTaskDto dto, string userId)
     {
+        if (!string.IsNullOrEmpty(dto.AssignedToUserId))
+            await EnsureCanBeAssignedAsync(dto.AssignedToUserId, dto.RoomId);
+
         var task = new HousekeepingTask
         {
             RoomId = dto.RoomId,
@@ -76,6 +93,9 @@ public class HousekeepingService : IHousekeepingService
     {
         var task = await _context.HousekeepingTasks.FindAsync(id)
             ?? throw new KeyNotFoundException($"Task {id} not found");
+
+        if (!string.IsNullOrEmpty(dto.AssignedToUserId))
+            await EnsureCanBeAssignedAsync(dto.AssignedToUserId, task.RoomId);
 
         if (dto.AssignedToUserId != null) task.AssignedToUserId = string.IsNullOrEmpty(dto.AssignedToUserId) ? null : dto.AssignedToUserId;
         if (dto.Priority.HasValue) task.Priority = dto.Priority.Value;

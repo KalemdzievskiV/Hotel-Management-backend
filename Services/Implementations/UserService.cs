@@ -1,3 +1,4 @@
+using HotelManagement.Data;
 using HotelManagement.Infrastructure.Exceptions;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
@@ -10,11 +11,22 @@ public class UserService : Services.Interfaces.IUserService
 {
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly RoleManager<IdentityRole> _roleManager;
+    private readonly ApplicationDbContext _context;
 
-    public UserService(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager)
+    public UserService(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager, ApplicationDbContext context)
     {
         _userManager = userManager;
         _roleManager = roleManager;
+        _context = context;
+    }
+
+    /// <summary>
+    /// Staff are assigned by hotel id; an unknown id would otherwise fail on the database's foreign key
+    /// </summary>
+    private async Task EnsureHotelExistsAsync(int? hotelId)
+    {
+        if (hotelId.HasValue && !await _context.Hotels.AnyAsync(h => h.Id == hotelId.Value))
+            throw new BusinessRuleException($"Hotel {hotelId} does not exist");
     }
 
     public async Task<UserDto> CreateUserAsync(CreateUserDto createDto)
@@ -27,6 +39,8 @@ public class UserService : Services.Interfaces.IUserService
         // Ensure role exists
         if (!await _roleManager.RoleExistsAsync(createDto.Role))
             throw new BusinessRuleException($"Role '{createDto.Role}' does not exist");
+
+        await EnsureHotelExistsAsync(createDto.HotelId);
 
         // Create new user
         var user = new ApplicationUser
@@ -178,6 +192,8 @@ public class UserService : Services.Interfaces.IUserService
         if (user == null)
             throw new KeyNotFoundException($"User with ID {userId} not found");
 
+        await EnsureHotelExistsAsync(updateDto.HotelId);
+
         // Update properties
         user.FirstName = updateDto.FirstName;
         user.LastName = updateDto.LastName;
@@ -271,6 +287,8 @@ public class UserService : Services.Interfaces.IUserService
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null)
             throw new KeyNotFoundException($"User with ID {userId} not found");
+
+        await EnsureHotelExistsAsync(hotelId);
 
         user.HotelId = hotelId;
         user.UpdatedAt = DateTime.UtcNow;

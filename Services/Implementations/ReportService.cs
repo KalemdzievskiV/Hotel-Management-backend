@@ -177,12 +177,14 @@ namespace HotelManagement.Services.Implementations
         public async Task<IEnumerable<CancellationReportDto>> GetCancellationsAsync(DateTime startDate, DateTime endDate)
         {
             var hotelIds = await GetAccessibleHotelIdsAsync();
+            // CancelledAt is a timestamp; the end date covers that whole day
+            var endExclusive = endDate.Date.AddDays(1);
 
             var cancellations = await _context.Reservations
                 .Where(r => hotelIds.Contains(r.HotelId) &&
                             r.CancelledAt.HasValue &&
                             r.CancelledAt.Value >= startDate &&
-                            r.CancelledAt.Value <= endDate &&
+                            r.CancelledAt.Value < endExclusive &&
                             r.Status == ReservationStatus.Cancelled)
                 .Select(r => new { r.CancelledAt, r.TotalAmount, r.CancellationReason })
                 .ToListAsync();

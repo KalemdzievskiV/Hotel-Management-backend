@@ -60,7 +60,11 @@ public class WalkInController : ControllerBase
 
         if (guest == null) return NotFound();
 
-        var completedReservations = guest.Reservations
+        // Stays at other hotels are those hotels' business, same as the guest's reservation list
+        var hotelIds = await _hotelAccess.GetAccessibleHotelIdsAsync();
+        var reservationsHere = guest.Reservations.Where(r => hotelIds.Contains(r.HotelId)).ToList();
+
+        var completedReservations = reservationsHere
             .Where(r => r.Status == ReservationStatus.CheckedOut)
             .OrderByDescending(r => r.CheckOutDate)
             .ToList();
@@ -70,7 +74,7 @@ public class WalkInController : ControllerBase
             .OrderByDescending(g => g.Count())
             .FirstOrDefault()?.Key;
 
-        var hasOutstanding = guest.Reservations
+        var hasOutstanding = reservationsHere
             .Any(r => r.IsActive && r.PaymentStatus != PaymentStatus.Paid);
 
         var intelligence = new GuestIntelligenceDto
@@ -87,7 +91,7 @@ public class WalkInController : ControllerBase
             Notes = guest.Notes,
             TotalStays = completedReservations.Count,
             TotalSpent = completedReservations.Sum(r => r.TotalAmount),
-            LastStayDate = guest.LastStayDate,
+            LastStayDate = completedReservations.Select(r => (DateTime?)(r.CheckedOutAt ?? r.CheckOutDate)).FirstOrDefault(),
             MostUsedRoomType = mostUsedRoomType,
             HasOutstandingPayments = hasOutstanding,
             RecentStays = completedReservations

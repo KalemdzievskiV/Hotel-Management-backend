@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using HotelManagement.Models.Constants;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Services.Interfaces;
@@ -20,6 +21,14 @@ public class UsersController : ControllerBase
     {
         _userService = userService;
     }
+
+    /// <summary>
+    /// A SuperAdmin locking out, deleting or demoting themselves could leave nobody able to manage accounts
+    /// </summary>
+    private bool IsOwnAccount(string userId) => userId == User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+    private BadRequestObjectResult OwnAccountRefused(string action) =>
+        BadRequest(new { message = $"You can't {action} your own account; ask another SuperAdmin" });
 
     /// <summary>
     /// Create new user (SuperAdmin only)
@@ -113,6 +122,9 @@ public class UsersController : ControllerBase
     [HttpPost("{userId}/deactivate")]
     public async Task<IActionResult> DeactivateUser(string userId)
     {
+        if (IsOwnAccount(userId))
+            return OwnAccountRefused("deactivate");
+
         await _userService.DeactivateUserAsync(userId);
         return Ok(new { message = "User deactivated successfully" });
     }
@@ -123,6 +135,9 @@ public class UsersController : ControllerBase
     [HttpDelete("{userId}")]
     public async Task<IActionResult> DeleteUser(string userId)
     {
+        if (IsOwnAccount(userId))
+            return OwnAccountRefused("delete");
+
         await _userService.DeleteUserAsync(userId);
         return NoContent();
     }
@@ -143,6 +158,9 @@ public class UsersController : ControllerBase
     [HttpPatch("{userId}/role")]
     public async Task<IActionResult> UpdateUserRole(string userId, [FromBody] UpdateRoleRequest request)
     {
+        if (IsOwnAccount(userId))
+            return OwnAccountRefused("change the role of");
+
         await _userService.UpdateUserRoleAsync(userId, request.Role);
         return Ok(new { message = $"User role updated to {request.Role} successfully" });
     }
@@ -163,6 +181,9 @@ public class UsersController : ControllerBase
     [HttpDelete("{userId}/roles/{role}")]
     public async Task<IActionResult> RemoveRoleFromUser(string userId, string role)
     {
+        if (IsOwnAccount(userId))
+            return OwnAccountRefused("remove roles from");
+
         await _userService.RemoveRoleFromUserAsync(userId, role);
         return Ok(new { message = $"Role {role} removed from user successfully" });
     }

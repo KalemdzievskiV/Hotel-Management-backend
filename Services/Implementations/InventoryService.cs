@@ -1,4 +1,5 @@
 using HotelManagement.Data;
+using HotelManagement.Infrastructure.Exceptions;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Models.Enums;
@@ -163,7 +164,10 @@ public class InventoryService : IInventoryService
             case InventoryTransactionType.Usage:
             case InventoryTransactionType.Damage:
             case InventoryTransactionType.Loss:
-                item.Quantity = Math.Max(0, item.Quantity - dto.Quantity);
+                // Recording more than is on hand would leave the log and the stock count disagreeing
+                if (dto.Quantity > item.Quantity)
+                    throw new BusinessRuleException($"Only {item.Quantity} {item.Name} in stock");
+                item.Quantity -= dto.Quantity;
                 break;
             case InventoryTransactionType.Restock:
             case InventoryTransactionType.Return:
