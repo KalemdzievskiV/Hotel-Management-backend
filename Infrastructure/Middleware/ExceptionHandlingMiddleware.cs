@@ -38,6 +38,7 @@ public class ExceptionHandlingMiddleware
     {
         var statusCode = exception switch
         {
+            PlanLimitException => HttpStatusCode.PaymentRequired,
             BusinessRuleException => HttpStatusCode.BadRequest,
             ArgumentException => HttpStatusCode.BadRequest,
             KeyNotFoundException => HttpStatusCode.NotFound,
@@ -61,6 +62,17 @@ public class ExceptionHandlingMiddleware
             : null;
 
         var response = ApiResponse<object>.ErrorResponse(message, errors, (int)statusCode);
+        if (exception is PlanLimitException limit)
+        {
+            response.Data = new
+            {
+                code = "plan_limit",
+                limit = limit.Limit,
+                currentPlan = limit.CurrentPlan.ToString(),
+                allowed = limit.Allowed,
+                upgradeTo = limit.UpgradeTo?.ToString()
+            };
+        }
 
         context.Response.ContentType = "application/json";
         context.Response.StatusCode = (int)statusCode;

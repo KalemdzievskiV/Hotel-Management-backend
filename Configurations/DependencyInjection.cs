@@ -51,6 +51,16 @@ namespace HotelManagement.Configurations
             services.AddScoped<IInventoryService, InventoryService>();
             services.AddScoped<IHousekeepingService, HousekeepingService>();
             services.AddScoped<IWalkInService, WalkInService>();
+            services.AddScoped<IEntitlementService, EntitlementService>();
+            services.AddSingleton(TimeProvider.System);
+
+            // Billing: the fake provider stands in until a real payment provider is chosen
+            services.Configure<Services.Billing.BillingOptions>(configuration.GetSection(Services.Billing.BillingOptions.SectionName));
+            services.AddSingleton<Services.Billing.FakeBillingProvider>();
+            services.AddSingleton<Services.Billing.IBillingProvider>(sp => sp.GetRequiredService<Services.Billing.FakeBillingProvider>());
+            services.AddScoped<IBillingService, BillingService>();
+            services.AddScoped<ISubscriptionAdminService, SubscriptionAdminService>();
+            services.AddHostedService<Services.Billing.SubscriptionMaintenanceService>();
 
             // 4️⃣ AutoMapper
             services.AddAutoMapper(typeof(AutoMapperProfile));

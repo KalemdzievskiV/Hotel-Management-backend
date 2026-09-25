@@ -1,29 +1,23 @@
 using FluentValidation;
-using HotelManagement.Models.Constants;
 using HotelManagement.Models.DTOs.Auth;
 
 namespace HotelManagement.Validators;
 
-public class RegisterRequestDtoValidator : AbstractValidator<RegisterRequestDto>
+public class RegisterOwnerRequestDtoValidator : AbstractValidator<RegisterOwnerRequestDto>
 {
-    /// <summary>
-    /// Letters of any alphabet (e.g. Cyrillic, or š and ž), plus spaces, hyphens, apostrophes and periods
-    /// </summary>
-    public const string NamePattern = @"^[\p{L}\p{M}\s\-'\.]+$";
-
-    public RegisterRequestDtoValidator()
+    public RegisterOwnerRequestDtoValidator()
     {
         RuleFor(x => x.FirstName)
             .NotEmpty().WithMessage("First name is required")
             .MinimumLength(2).WithMessage("First name must be at least 2 characters")
             .MaximumLength(100).WithMessage("First name cannot exceed 100 characters")
-            .Matches(NamePattern).WithMessage("First name can only contain letters, spaces, hyphens, apostrophes, and periods");
+            .Matches(RegisterRequestDtoValidator.NamePattern).WithMessage("First name can only contain letters, spaces, hyphens, apostrophes, and periods");
 
         RuleFor(x => x.LastName)
             .NotEmpty().WithMessage("Last name is required")
             .MinimumLength(2).WithMessage("Last name must be at least 2 characters")
             .MaximumLength(100).WithMessage("Last name cannot exceed 100 characters")
-            .Matches(NamePattern).WithMessage("Last name can only contain letters, spaces, hyphens, apostrophes, and periods");
+            .Matches(RegisterRequestDtoValidator.NamePattern).WithMessage("Last name can only contain letters, spaces, hyphens, apostrophes, and periods");
 
         RuleFor(x => x.Email)
             .NotEmpty().WithMessage("Email is required")
@@ -38,9 +32,7 @@ public class RegisterRequestDtoValidator : AbstractValidator<RegisterRequestDto>
             .Matches(@"[a-z]").WithMessage("Password must contain at least one lowercase letter")
             .Matches(@"[0-9]").WithMessage("Password must contain at least one number");
 
-        RuleFor(x => x.Role)
-            .NotEmpty().WithMessage("Role is required")
-            .Must(role => AppRoles.AllRoles.Contains(role))
-            .WithMessage($"Role must be one of: {string.Join(", ", AppRoles.AllRoles)}");
+        RuleFor(x => x.PhoneNumber).MaximumLength(30);
+        RuleFor(x => x.Country).MaximumLength(100);
     }
 }

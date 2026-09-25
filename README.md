@@ -39,6 +39,8 @@ Point at another database without editing files:
 | `JwtSettings__ExpiryMinutes`           | no       | Token lifetime, default 60 |
 | `Cors__AllowedOrigins__0`              | yes      | Frontend URL (add `__1`, `__2`, ... for more) |
 | `SeedAdmin__Email` / `SeedAdmin__Password` | first run | Creates the first SuperAdmin in Production if it doesn't exist |
+| `Billing__FakeSigningKey`              | no       | Signs fake checkout links and webhooks; random per start when unset |
+| `Billing__RunMaintenance`              | no       | Hourly renew-and-expire job, default `true` |
 
 Demo data and the default SuperAdmin are only seeded in Development.
 
@@ -48,8 +50,8 @@ Demo data and the default SuperAdmin are only seeded in Development.
 
 | Role        | Access |
 |-------------|--------|
-| SuperAdmin  | Every hotel; manages users |
-| Admin       | Hotels they own plus the hotel they're assigned to |
+| SuperAdmin  | Every hotel; manages users and subscriptions |
+| Admin       | Hotels they own plus the hotel they're assigned to; manages their own staff (`/api/Staff`) and billing |
 | Manager     | The hotel they're assigned to (`ApplicationUser.HotelId`) |
 | Housekeeper | Their assigned hotel's rooms and housekeeping tasks |
 | Guest       | Browses hotels; books and sees only reservations for their own guest profile |
@@ -68,12 +70,40 @@ ends their sessions immediately. Five failed logins lock an account for 15 minut
 - **Money:** `TotalAmount = room price − DiscountAmount + ExtraCharges`. Every payment and refund
   is a row in `Payments`; `DepositAmount` is their net total and only changes through the
   payment/refund endpoints.
-- **Lifecycle:** Pending → Confirmed → CheckedIn → CheckedOut, or Cancelled / NoShow. Only pending
-  reservations without payments can be deleted; everything else is cancelled to keep history.
+- **Lifecycle:** Pending → Confirmed → CheckedIn → CheckedOut, or Cancelled / NoShow. Staff bookings
+  are confirmed on creation; guests' online bookings wait as Pending. Bookings that haven't started
+  and have no payments can be deleted; everything else is cancelled to keep history.
 - Walk-in check-in and express checkout (`WalkInService`) run as single transactions.
 
 Business-rule violations throw `BusinessRuleException` and return 400 with the message;
 missing records return 404; anything unexpected is logged and returns 500.
+
+## Subscriptions and billing
+
+Each hotel owner (Admin) has one `Subscription`, which covers all their hotels and staff. Owners sign
+up at `POST /api/Auth/register-owner` and start a 30-day trial of Pro.
+
+| Plan    | Price (EUR)      | Hotels | Rooms | Staff     | Inventory | Reports      |
+|---------|------------------|--------|-------|-----------|-----------|--------------|
+| Free    | 0                | 1      | 5     | 1         | view only | last 30 days |
+| Starter | 12/mo, 120/yr    | 1      | 20    | 5         | ✓         | ✓            |
+| Pro     | 29/mo, 290/yr    | 3      | 60    | unlimited | ✓         | ✓            |
+
+- **The database decides access**, not the payment provider: `Subscription.GetEffectivePlan` looks at
+  the status and `AccessUntil`/`GraceUntil`. Plans live in `PlanCatalog`; checks in `EntitlementService`.
+  Going over a limit returns **402** with `data.code = "plan_limit"`. SuperAdmins aren't limited.
+  Downgrades never delete anything; owners just can't add beyond the plan.
+- **Payment providers** implement `IBillingProvider` and report `BillingEvent`s through
+  `POST /api/billing/webhooks/{provider}` (signature-checked, each event applied once). Until a real
+  provider is chosen, `FakeBillingProvider` stands in: the app's own test checkout page
+  (`/dashboard/billing/checkout`) approves or declines, and renewals are "charged" by the hourly
+  `SubscriptionMaintenanceService`, which also ends trials, cancelled plans and grace periods (14 days
+  after a failed payment). `POST /api/billing/fake/simulate` (SuperAdmin, not in Production) renews or
+  fails a payment now, or runs the job.
+- **SuperAdmin tools** (`/api/admin/subscriptions`): extend a trial or paid period (card payers'
+  next charge moves too, without charging), record a bank transfer, give free access, change plan,
+  or grant grace. Each change needs a reason and is kept in `SubscriptionEvent` with who made it;
+  owners see the history on their Billing page.
 
 ## Project layout
 

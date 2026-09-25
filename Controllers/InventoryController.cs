@@ -14,17 +14,26 @@ public class InventoryController : ControllerBase
 {
     private readonly IInventoryService _inventoryService;
     private readonly IHotelAccessService _hotelAccess;
+    private readonly IEntitlementService _entitlements;
 
-    public InventoryController(IInventoryService inventoryService, IHotelAccessService hotelAccess)
+    public InventoryController(IInventoryService inventoryService, IHotelAccessService hotelAccess, IEntitlementService entitlements)
     {
         _inventoryService = inventoryService;
         _hotelAccess = hotelAccess;
+        _entitlements = entitlements;
     }
 
-    private async Task<bool> CanAccessItemAsync(int itemId)
+    /// <summary>
+    /// Stock can be viewed on any plan; changing it needs a plan with Inventory
+    /// </summary>
+    private async Task<bool> CanChangeItemAsync(int itemId)
     {
         var item = await _inventoryService.GetItemByIdAsync(itemId);
-        return item != null && await _hotelAccess.CanAccessHotelAsync(item.HotelId);
+        if (item == null || !await _hotelAccess.CanAccessHotelAsync(item.HotelId))
+            return false;
+
+        await _entitlements.EnsureFeatureAsync(item.HotelId, PlanFeature.Inventory);
+        return true;
     }
 
     [HttpGet("hotel/{hotelId}")]
@@ -52,6 +61,7 @@ public class InventoryController : ControllerBase
         if (!await _hotelAccess.CanAccessHotelAsync(dto.HotelId))
             return Forbid();
 
+        await _entitlements.EnsureFeatureAsync(dto.HotelId, PlanFeature.Inventory);
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
         var item = await _inventoryService.CreateItemAsync(dto, userId);
         return CreatedAtAction(nameof(GetById), new { id = item.Id }, item);
@@ -60,7 +70,7 @@ public class InventoryController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateInventoryItemDto dto)
     {
-        if (!await CanAccessItemAsync(id))
+        if (!await CanChangeItemAsync(id))
             return NotFound();
 
         return Ok(await _inventoryService.UpdateItemAsync(id, dto));
@@ -69,7 +79,7 @@ public class InventoryController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(int id)
     {
-        if (!await CanAccessItemAsync(id))
+        if (!await CanChangeItemAsync(id))
             return NotFound();
 
         await _inventoryService.DeleteItemAsync(id);
@@ -100,6 +110,8 @@ public class InventoryController : ControllerBase
         var item = await _inventoryService.GetItemByIdAsync(dto.InventoryItemId);
         if (item == null || !await _hotelAccess.CanAccessHotelAsync(item.HotelId))
             return NotFound();
+
+        await _entitlements.EnsureFeatureAsync(item.HotelId, PlanFeature.Inventory);
 
         // A transaction tied to a room must use a room of the item's hotel
         if (dto.RoomId.HasValue && await _hotelAccess.GetRoomHotelIdAsync(dto.RoomId.Value) != item.HotelId)

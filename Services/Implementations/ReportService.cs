@@ -13,19 +13,31 @@ namespace HotelManagement.Services.Implementations
     {
         private readonly ApplicationDbContext _context;
         private readonly IHotelAccessService _hotelAccess;
+        private readonly IEntitlementService _entitlements;
 
-        public ReportService(ApplicationDbContext context, IHotelAccessService hotelAccess)
+        public ReportService(ApplicationDbContext context, IHotelAccessService hotelAccess, IEntitlementService entitlements)
         {
             _context = context;
             _hotelAccess = hotelAccess;
+            _entitlements = entitlements;
         }
 
         private async Task<IReadOnlyList<int>> GetAccessibleHotelIdsAsync() =>
             await _hotelAccess.GetAccessibleHotelIdsAsync();
 
+        /// <summary>
+        /// Plans without full reports only reach back a limited number of days
+        /// </summary>
+        private async Task<DateTime> LimitHistoryAsync(IReadOnlyList<int> hotelIds, DateTime startDate)
+        {
+            var earliest = await _entitlements.GetReportHistoryStartAsync(hotelIds);
+            return earliest.HasValue && earliest.Value > startDate ? earliest.Value : startDate;
+        }
+
         public async Task<IEnumerable<DailyRevenueDto>> GetDailyRevenueAsync(DateTime startDate, DateTime endDate)
         {
             var hotelIds = await GetAccessibleHotelIdsAsync();
+            startDate = await LimitHistoryAsync(hotelIds, startDate);
 
             var reservations = await _context.Reservations
                 .Where(r => hotelIds.Contains(r.HotelId) &&
@@ -47,6 +59,7 @@ namespace HotelManagement.Services.Implementations
         public async Task<IEnumerable<WeeklyRevenueDto>> GetWeeklyRevenueAsync(DateTime startDate, DateTime endDate)
         {
             var hotelIds = await GetAccessibleHotelIdsAsync();
+            startDate = await LimitHistoryAsync(hotelIds, startDate);
 
             var reservations = await _context.Reservations
                 .Where(r => hotelIds.Contains(r.HotelId) &&
@@ -75,10 +88,11 @@ namespace HotelManagement.Services.Implementations
         public async Task<IEnumerable<MonthlyRevenueDto>> GetMonthlyRevenueAsync(int year)
         {
             var hotelIds = await GetAccessibleHotelIdsAsync();
+            var earliest = await LimitHistoryAsync(hotelIds, DateTime.MinValue);
 
             var reservations = await _context.Reservations
                 .Where(r => hotelIds.Contains(r.HotelId) &&
-                            r.CheckInDate.Year == year &&
+                            r.CheckInDate.Year == year && r.CheckInDate >= earliest &&
                             r.Status == ReservationStatus.CheckedOut)
                 .GroupBy(r => r.CheckInDate.Month)
                 .Select(g => new MonthlyRevenueDto
@@ -96,6 +110,7 @@ namespace HotelManagement.Services.Implementations
         public async Task<IEnumerable<OccupancyReportDto>> GetOccupancyHistoryAsync(DateTime startDate, DateTime endDate)
         {
             var hotelIds = await GetAccessibleHotelIdsAsync();
+            startDate = await LimitHistoryAsync(hotelIds, startDate);
             var totalRooms = await _context.Rooms.CountAsync(r => hotelIds.Contains(r.HotelId));
 
             var occupancy = await _context.Reservations
@@ -177,6 +192,7 @@ namespace HotelManagement.Services.Implementations
         public async Task<IEnumerable<CancellationReportDto>> GetCancellationsAsync(DateTime startDate, DateTime endDate)
         {
             var hotelIds = await GetAccessibleHotelIdsAsync();
+            startDate = await LimitHistoryAsync(hotelIds, startDate);
             // CancelledAt is a timestamp; the end date covers that whole day
             var endExclusive = endDate.Date.AddDays(1);
 
@@ -208,6 +224,7 @@ namespace HotelManagement.Services.Implementations
         public async Task<IEnumerable<NoShowReportDto>> GetNoShowsAsync(DateTime startDate, DateTime endDate)
         {
             var hotelIds = await GetAccessibleHotelIdsAsync();
+            startDate = await LimitHistoryAsync(hotelIds, startDate);
 
             return await _context.Reservations
                 .Include(r => r.Guest)
@@ -235,6 +252,7 @@ namespace HotelManagement.Services.Implementations
         public async Task<IEnumerable<PaymentReconciliationDto>> GetPaymentReconciliationAsync(DateTime startDate, DateTime endDate)
         {
             var hotelIds = await GetAccessibleHotelIdsAsync();
+            startDate = await LimitHistoryAsync(hotelIds, startDate);
             var endExclusive = endDate.Date.AddDays(1);
 
             var payments = await _context.Payments

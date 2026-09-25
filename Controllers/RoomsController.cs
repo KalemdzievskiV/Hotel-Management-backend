@@ -21,12 +21,15 @@ public class RoomsController : CrudController<RoomDto>
     private readonly IRoomService _roomService;
     private readonly IReservationService _reservationService;
     private readonly IHotelAccessService _hotelAccess;
+    private readonly IEntitlementService _entitlements;
 
     public RoomsController(
         IRoomService service,
         IReservationService reservationService,
-        IHotelAccessService hotelAccess) : base(service)
+        IHotelAccessService hotelAccess,
+        IEntitlementService entitlements) : base(service)
     {
+        _entitlements = entitlements;
         _roomService = service;
         _reservationService = reservationService;
         _hotelAccess = hotelAccess;
@@ -101,6 +104,7 @@ public class RoomsController : CrudController<RoomDto>
         if (!await _hotelAccess.CanAccessHotelAsync(dto.HotelId))
             return Forbid();
 
+        await _entitlements.EnsureCanAddRoomAsync(dto.HotelId);
         var created = await _roomService.CreateAsync(dto);
         return CreatedAtAction("GetById", new { id = created.Id }, created);
     }

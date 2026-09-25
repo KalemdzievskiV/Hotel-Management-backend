@@ -21,6 +21,9 @@ namespace HotelManagement.Data
         public DbSet<InventoryTransaction> InventoryTransactions { get; set; }
         public DbSet<HousekeepingTask> HousekeepingTasks { get; set; }
         public DbSet<Payment> Payments { get; set; }
+        public DbSet<Subscription> Subscriptions { get; set; }
+        public DbSet<SubscriptionEvent> SubscriptionEvents { get; set; }
+        public DbSet<ProcessedBillingEvent> ProcessedBillingEvents { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -166,6 +169,32 @@ namespace HotelManagement.Data
                 .WithMany()
                 .HasForeignKey(u => u.HotelId)
                 .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
+
+            // Owner -> Subscription: one per owner, removed with the owner
+            modelBuilder.Entity<Subscription>()
+                .HasOne(s => s.Owner)
+                .WithMany()
+                .HasForeignKey(s => s.OwnerId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<Subscription>()
+                .HasIndex(s => s.OwnerId)
+                .IsUnique();
+
+            // Subscription -> history: CASCADE
+            modelBuilder.Entity<SubscriptionEvent>()
+                .HasOne(e => e.Subscription)
+                .WithMany(s => s.Events)
+                .HasForeignKey(e => e.SubscriptionId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // History entry -> the user who made the change: kept if that user is deleted
+            modelBuilder.Entity<SubscriptionEvent>()
+                .HasOne(e => e.Actor)
+                .WithMany()
+                .HasForeignKey(e => e.ActorUserId)
+                .OnDelete(DeleteBehavior.SetNull)
                 .IsRequired(false);
 
             // Normalize all DateTime values to UTC before writing to PostgreSQL timestamptz columns

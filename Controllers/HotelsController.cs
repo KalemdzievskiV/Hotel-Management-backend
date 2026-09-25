@@ -15,13 +15,16 @@ namespace HotelManagement.Controllers
         private readonly IAuthorizationService _authorizationService;
         private readonly IHotelAccessService _hotelAccess;
         private readonly IUserService _userService;
+        private readonly IEntitlementService _entitlements;
 
         public HotelsController(
             IHotelService service,
             IAuthorizationService authorizationService,
             IHotelAccessService hotelAccess,
-            IUserService userService) : base(service)
+            IUserService userService,
+            IEntitlementService entitlements) : base(service)
         {
+            _entitlements = entitlements;
             _hotelAccess = hotelAccess;
             _userService = userService;
             _hotelService = service;
@@ -101,6 +104,7 @@ namespace HotelManagement.Controllers
             // Set OwnerId from authenticated user
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
             dto.OwnerId = userId;
+            await _entitlements.EnsureCanAddHotelAsync(userId);
             
             var created = await _hotelService.CreateAsync(dto);
             return CreatedAtAction("GetById", new { id = created.Id }, created);

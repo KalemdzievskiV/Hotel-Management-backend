@@ -12,13 +12,13 @@ public class GuestDtoValidator : AbstractValidator<GuestDto>
             .NotEmpty().WithMessage("First name is required")
             .MinimumLength(2).WithMessage("First name must be at least 2 characters")
             .MaximumLength(100).WithMessage("First name cannot exceed 100 characters")
-            .Matches(@"^[a-zA-Z\s\-'\.]+$").WithMessage("First name can only contain letters, spaces, hyphens, apostrophes, and periods");
+            .Matches(RegisterRequestDtoValidator.NamePattern).WithMessage("First name can only contain letters, spaces, hyphens, apostrophes, and periods");
         
         RuleFor(x => x.LastName)
             .NotEmpty().WithMessage("Last name is required")
             .MinimumLength(2).WithMessage("Last name must be at least 2 characters")
             .MaximumLength(100).WithMessage("Last name cannot exceed 100 characters")
-            .Matches(@"^[a-zA-Z\s\-'\.]+$").WithMessage("Last name can only contain letters, spaces, hyphens, apostrophes, and periods");
+            .Matches(RegisterRequestDtoValidator.NamePattern).WithMessage("Last name can only contain letters, spaces, hyphens, apostrophes, and periods");
         
         // Contact Information
         RuleFor(x => x.Email)

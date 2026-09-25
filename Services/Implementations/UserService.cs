@@ -1,3 +1,4 @@
+using HotelManagement.Models.Constants;
 using HotelManagement.Data;
 using HotelManagement.Infrastructure.Exceptions;
 using HotelManagement.Models.DTOs;
@@ -12,12 +13,23 @@ public class UserService : Services.Interfaces.IUserService
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly RoleManager<IdentityRole> _roleManager;
     private readonly ApplicationDbContext _context;
+    private readonly Interfaces.IEntitlementService _entitlements;
 
-    public UserService(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager, ApplicationDbContext context)
+    public UserService(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager, ApplicationDbContext context, Interfaces.IEntitlementService entitlements)
     {
         _userManager = userManager;
         _roleManager = roleManager;
         _context = context;
+        _entitlements = entitlements;
+    }
+
+    /// <summary>
+    /// Hotel owners (Admins) need a subscription; a new owner starts with a trial
+    /// </summary>
+    private async Task EnsureOwnerSubscriptionAsync(string userId, string role)
+    {
+        if (role == AppRoles.Admin)
+            await _entitlements.EnsureSubscriptionAsync(userId);
     }
 
     /// <summary>
@@ -84,6 +96,8 @@ public class UserService : Services.Interfaces.IUserService
             await _userManager.DeleteAsync(user);
             throw new BusinessRuleException($"Failed to assign role: {string.Join(", ", roleResult.Errors.Select(e => e.Description))}");
         }
+
+        await EnsureOwnerSubscriptionAsync(user.Id, createDto.Role);
 
         return await GetUserByIdAsync(user.Id) ?? throw new InvalidOperationException("User not found after creation");
     }
@@ -319,6 +333,8 @@ public class UserService : Services.Interfaces.IUserService
         if (!addResult.Succeeded)
             throw new BusinessRuleException($"Failed to add new role: {string.Join(", ", addResult.Errors.Select(e => e.Description))}");
 
+        await EnsureOwnerSubscriptionAsync(user.Id, newRole);
+
         // Tokens carry roles, so end existing sessions to apply the change immediately
         await _userManager.UpdateSecurityStampAsync(user);
     }
@@ -336,6 +352,8 @@ public class UserService : Services.Interfaces.IUserService
         var result = await _userManager.AddToRoleAsync(user, role);
         if (!result.Succeeded)
             throw new BusinessRuleException($"Failed to add role: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+
+        await EnsureOwnerSubscriptionAsync(user.Id, role);
 
         // Tokens carry roles, so end existing sessions to apply the change immediately
         await _userManager.UpdateSecurityStampAsync(user);

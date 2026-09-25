@@ -2,6 +2,8 @@ using HotelManagement.Configurations;
 using HotelManagement.Data;
 using HotelManagement.Infrastructure.Filters;
 using HotelManagement.Infrastructure.Middleware;
+using HotelManagement.Models.Constants;
+using HotelManagement.Services.Interfaces;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -116,6 +118,11 @@ using (var scope = app.Services.CreateScope())
 
     if (app.Environment.IsDevelopment())
         await DbSeeder.SeedMockDataAsync(context, userManager);
+
+    // Hotel owners from before subscriptions existed start with a trial
+    var entitlements = services.GetRequiredService<IEntitlementService>();
+    foreach (var owner in await userManager.GetUsersInRoleAsync(AppRoles.Admin))
+        await entitlements.EnsureSubscriptionAsync(owner.Id);
 }
 
 // Global exception handling - must be first

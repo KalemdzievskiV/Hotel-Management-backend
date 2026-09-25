@@ -1,4 +1,5 @@
 using HotelManagement.Models;
+using HotelManagement.Models.Constants;
 using HotelManagement.Models.DTOs.Auth;
 using HotelManagement.Models.Entities;
 using HotelManagement.Services.Interfaces;
@@ -17,15 +18,18 @@ public class AuthController : ControllerBase
     private readonly RoleManager<IdentityRole> _roleManager;
     private readonly ITokenService _tokenService;
     private readonly JwtSettings _jwtSettings;
+    private readonly IEntitlementService _entitlements;
 
     public AuthController(
         UserManager<ApplicationUser> userManager,
         SignInManager<ApplicationUser> signInManager,
         RoleManager<IdentityRole> roleManager,
         ITokenService tokenService,
-        IOptions<JwtSettings> jwtSettings)
+        IOptions<JwtSettings> jwtSettings,
+        IEntitlementService entitlements)
     {
         _jwtSettings = jwtSettings.Value;
+        _entitlements = entitlements;
         _userManager = userManager;
         _signInManager = signInManager;
         _roleManager = roleManager;
@@ -75,17 +79,55 @@ public class AuthController : ControllerBase
 
         await _userManager.AddToRoleAsync(user, request.Role);
 
-        var roles = await _userManager.GetRolesAsync(user);
-        var token = _tokenService.GenerateToken(user, roles);
+        return Ok(await CreateAuthResponseAsync(user));
+    }
 
-        return Ok(new AuthResponseDto
+    /// <summary>
+    /// A hotel owner signs up: they become an Admin with a trial of the top plan and are signed in
+    /// </summary>
+    [HttpPost("register-owner")]
+    public async Task<IActionResult> RegisterOwner([FromBody] RegisterOwnerRequestDto request)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        if (await _userManager.FindByEmailAsync(request.Email) != null)
+            return BadRequest(new { message = "User with this email already exists" });
+
+        var user = new ApplicationUser
         {
-            Token = token,
+            UserName = request.Email,
+            Email = request.Email,
+            FirstName = request.FirstName,
+            LastName = request.LastName,
+            PhoneNumber = request.PhoneNumber,
+            Country = request.Country,
+            JobTitle = "Owner",
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var result = await _userManager.CreateAsync(user, request.Password);
+        if (!result.Succeeded)
+            return BadRequest(new { errors = result.Errors.Select(e => e.Description) });
+
+        await _userManager.AddToRoleAsync(user, AppRoles.Admin);
+        await _entitlements.EnsureSubscriptionAsync(user.Id);
+
+        return Ok(await CreateAuthResponseAsync(user));
+    }
+
+    private async Task<AuthResponseDto> CreateAuthResponseAsync(ApplicationUser user)
+    {
+        var roles = await _userManager.GetRolesAsync(user);
+        return new AuthResponseDto
+        {
+            Token = _tokenService.GenerateToken(user, roles),
             Email = user.Email!,
             FullName = user.FullName,
             Roles = roles,
             ExpiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpiryMinutes)
-        });
+        };
     }
 
     [HttpPost("login")]
@@ -113,16 +155,6 @@ public class AuthController : ControllerBase
         user.LastLoginDate = DateTime.UtcNow;
         await _userManager.UpdateAsync(user);
 
-        var roles = await _userManager.GetRolesAsync(user);
-        var token = _tokenService.GenerateToken(user, roles);
-
-        return Ok(new AuthResponseDto
-        {
-            Token = token,
-            Email = user.Email!,
-            FullName = user.FullName,
-            Roles = roles,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpiryMinutes)
-        });
+        return Ok(await CreateAuthResponseAsync(user));
     }
 }

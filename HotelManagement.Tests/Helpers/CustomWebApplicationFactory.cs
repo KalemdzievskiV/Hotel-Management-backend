@@ -21,6 +21,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         builder.UseEnvironment("Testing");
         // Secrets aren't in appsettings.json; UseSetting applies early enough for Program's startup code
         builder.UseSetting("JwtSettings:Secret", "integration-tests-signing-key-at-least-32-chars");
+        // Tests run billing maintenance themselves, at the moments they choose
+        builder.UseSetting("Billing:RunMaintenance", "false");
         
         builder.ConfigureServices(services =>
         {

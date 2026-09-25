@@ -18,8 +18,11 @@ public class HotelsControllerIntegrationTests : IClassFixture<CustomWebApplicati
         _client = factory.CreateClient();
     }
 
+    // xUnit creates the class for each test, so each test gets its own users (and its own plan limits)
+    private readonly string _testId = Guid.NewGuid().ToString("N");
+
     private Task<string> GetAuthTokenAsync(string role = "Admin") =>
-        TestAuth.GetTokenAsync(_client, role, $"test{role}@test.com");
+        TestAuth.GetTokenAsync(_client, role, $"test{role}{_testId}@test.com");
 
     [Fact]
     public async Task GetAllHotels_WithoutAuth_ShouldReturnUnauthorized()

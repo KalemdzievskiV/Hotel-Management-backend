@@ -26,14 +26,17 @@ public class ReservationsController : ControllerBase
     private readonly IGuestService _guestService;
     private readonly IHotelAccessService _hotelAccess;
     private readonly IAuthorizationService _authorizationService;
+    private readonly IEntitlementService _entitlements;
 
     public ReservationsController(
         IReservationService reservationService,
         IRoomService roomService,
         IGuestService guestService,
         IHotelAccessService hotelAccess,
-        IAuthorizationService authorizationService)
+        IAuthorizationService authorizationService,
+        IEntitlementService entitlements)
     {
+        _entitlements = entitlements;
         _reservationService = reservationService;
         _roomService = roomService;
         _guestService = guestService;
@@ -438,6 +441,12 @@ public class ReservationsController : ControllerBase
             return BadRequest(new { message = "Date range cannot exceed 365 days" });
 
         var hotelIds = await _hotelAccess.GetAccessibleHotelIdsAsync();
+
+        // Plans without full reports only reach back a limited number of days
+        var earliest = await _entitlements.GetReportHistoryStartAsync(hotelIds);
+        if (earliest > start)
+            start = earliest.Value;
+
         var userRooms = (await _roomService.GetRoomsForHotelsAsync(hotelIds)).ToList();
         var roomsDict = userRooms.ToDictionary(r => r.Id);
 
