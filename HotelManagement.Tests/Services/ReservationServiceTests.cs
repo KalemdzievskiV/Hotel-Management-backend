@@ -690,7 +690,7 @@ public class ReservationServiceTests
     }
 
     [Fact]
-    public async Task DeleteReservationAsync_ConfirmedReservation_ThrowsException()
+    public async Task DeleteReservationAsync_CheckedInReservation_ThrowsException()
     {
         // Arrange
         await SeedTestData();
@@ -703,7 +703,7 @@ public class ReservationServiceTests
             BookingType = BookingType.Daily,
             CheckInDate = DateTime.UtcNow.AddDays(5),
             CheckOutDate = DateTime.UtcNow.AddDays(7),
-            Status = ReservationStatus.Confirmed,
+            Status = ReservationStatus.CheckedIn,
             NumberOfGuests = 2,
             TotalAmount = 300,
             CreatedAt = DateTime.UtcNow
@@ -714,6 +714,6 @@ public class ReservationServiceTests
         // Act & Assert
         var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => _service.DeleteReservationAsync(reservation.Id));
-        Assert.Contains("Only pending reservations can be deleted", exception.Message);
+        Assert.Contains("Only reservations that haven't started can be deleted", exception.Message);
     }
 }

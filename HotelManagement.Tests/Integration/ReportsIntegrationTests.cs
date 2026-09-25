@@ -85,7 +85,6 @@ public class ReportsIntegrationTests : IClassFixture<CustomWebApplicationFactory
         var hotel = await _api.CreateHotelAsync();
         var other = await _api.CreateHotelAsync();
         var booking = await _api.BookAsync(hotel, startsInDays: 0, nights: 1);
-        await _api.PostAsync<ReservationDto>($"/api/Reservations/{booking.Id}/confirm", hotel.AdminToken);
         await _api.PostAsync<ReservationDto>($"/api/Reservations/{booking.Id}/noshow", hotel.AdminToken);
 
         (await _api.GetAsync<List<NoShowReportDto>>($"/api/Reports/noshows?startDate={Today}&endDate={Today}", hotel.AdminToken))

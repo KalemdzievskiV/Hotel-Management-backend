@@ -199,8 +199,8 @@ public class ReservationService : IReservationService
         });
 
     /// <summary>
-    /// Only pending reservations with no money recorded can be deleted; anything else is
-    /// history and should be cancelled instead.
+    /// Only bookings that haven't started (pending or confirmed) with no money recorded can be
+    /// deleted, e.g. one made by mistake; anything else is history and should be cancelled instead.
     /// </summary>
     public async Task DeleteReservationAsync(int id)
     {
@@ -209,8 +209,8 @@ public class ReservationService : IReservationService
             .FirstOrDefaultAsync(r => r.Id == id)
             ?? throw new KeyNotFoundException($"Reservation with ID {id} not found");
 
-        if (reservation.Status != ReservationStatus.Pending)
-            throw new BusinessRuleException("Only pending reservations can be deleted; cancel this reservation instead");
+        if (reservation.Status is not (ReservationStatus.Pending or ReservationStatus.Confirmed))
+            throw new BusinessRuleException("Only reservations that haven't started can be deleted; cancel this reservation instead");
 
         if (reservation.Payments.Count > 0)
             throw new BusinessRuleException("This reservation has payments recorded; cancel it and refund instead of deleting");

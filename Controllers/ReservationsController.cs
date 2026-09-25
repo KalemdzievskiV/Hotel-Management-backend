@@ -57,7 +57,7 @@ public class ReservationsController : ControllerBase
 
     /// <summary>
     /// Create a new reservation. A guest's booking is always for their own guest profile
-    /// (whatever GuestId was sent); staff can only book at their hotels.
+    /// (whatever GuestId was sent); staff can only book at their hotels, and their bookings are confirmed straight away.
     /// </summary>
     [HttpPost]
     [Authorize(Roles = $"{ManagementRoles},{AppRoles.Guest}")]
@@ -79,6 +79,11 @@ public class ReservationsController : ControllerBase
         }
 
         var reservation = await _reservationService.CreateReservationAsync(createDto);
+
+        // Staff are the ones who would approve it anyway; only guests' online bookings wait for approval
+        if (!User.IsInRole(AppRoles.Guest))
+            reservation = await _reservationService.ConfirmReservationAsync(reservation.Id);
+
         return CreatedAtAction(nameof(GetReservationById), new { id = reservation.Id }, reservation);
     }
 

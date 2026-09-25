@@ -108,7 +108,8 @@ public class ReservationsControllerIntegrationTests : IClassFixture<CustomWebApp
         Assert.Equal(300, result.TotalAmount); // 2 nights × $150
         Assert.Equal(100, result.DepositAmount);
         Assert.Equal(200, result.RemainingAmount);
-        Assert.Equal(ReservationStatus.Pending, result.Status);
+        Assert.Equal(ReservationStatus.Confirmed, result.Status); // staff bookings need no approval
+        Assert.NotNull(result.ConfirmedAt);
         Assert.Equal(PaymentStatus.PartiallyPaid, result.PaymentStatus);
     }
 
@@ -280,9 +281,10 @@ public class ReservationsControllerIntegrationTests : IClassFixture<CustomWebApp
     {
         // Arrange
         await SeedTestData();
-        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _adminToken);
 
-        // Create pending reservation
+        // A guest's online booking waits for the hotel's approval
+        var guestToken = await TestAuth.GetTokenAsync(_client, "Guest");
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", guestToken);
         var createDto = new CreateReservationDto
         {
             HotelId = _hotelId,
@@ -295,9 +297,11 @@ public class ReservationsControllerIntegrationTests : IClassFixture<CustomWebApp
         };
         var createResponse = await _client.PostAsJsonAsync("/api/Reservations", createDto);
         var created = await createResponse.Content.ReadFromJsonAsync<ReservationDto>();
+        Assert.Equal(ReservationStatus.Pending, created!.Status);
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _adminToken);
 
         // Act
-        var response = await _client.PostAsync($"/api/Reservations/{created!.Id}/confirm", null);
+        var response = await _client.PostAsync($"/api/Reservations/{created.Id}/confirm", null);
 
         // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -509,7 +513,7 @@ public class ReservationsControllerIntegrationTests : IClassFixture<CustomWebApp
         await _client.PostAsJsonAsync("/api/Reservations", createDto);
 
         // Act
-        var response = await _client.GetAsync($"/api/Reservations/status/{ReservationStatus.Pending}");
+        var response = await _client.GetAsync($"/api/Reservations/status/{ReservationStatus.Confirmed}");
 
         // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -517,7 +521,7 @@ public class ReservationsControllerIntegrationTests : IClassFixture<CustomWebApp
         var result = await response.Content.ReadFromJsonAsync<List<ReservationDto>>();
         Assert.NotNull(result);
         Assert.NotEmpty(result);
-        Assert.All(result, r => Assert.Equal(ReservationStatus.Pending, r.Status));
+        Assert.All(result, r => Assert.Equal(ReservationStatus.Confirmed, r.Status));
     }
 
     [Fact]
@@ -581,11 +585,11 @@ public class ReservationsControllerIntegrationTests : IClassFixture<CustomWebApp
         
         var result = await response.Content.ReadFromJsonAsync<Dictionary<string, int>>();
         Assert.NotNull(result);
-        Assert.True(result.ContainsKey("Pending") || result.ContainsKey("0")); // Enum might be serialized as int or string
+        Assert.True(result.ContainsKey("Confirmed") || result.ContainsKey("1")); // Enum might be serialized as int or string
     }
 
     [Fact]
-    public async Task DeleteReservation_PendingReservation_Returns204()
+    public async Task DeleteReservation_NotStartedReservation_Returns204()
     {
         // Arrange
         await SeedTestData();

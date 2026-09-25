@@ -93,7 +93,7 @@ public class HotelAccessIntegrationTests : IClassFixture<CustomWebApplicationFac
 
         (await SendRawAsync(HttpMethod.Get, $"/api/Reservations/{hotelA.ReservationId}", managerToken))
             .StatusCode.Should().Be(HttpStatusCode.OK);
-        (await SendRawAsync(HttpMethod.Post, $"/api/Reservations/{hotelA.ReservationId}/confirm", managerToken))
+        (await SendRawAsync(HttpMethod.Post, $"/api/Reservations/{hotelA.ReservationId}/payment", managerToken, new { Amount = 10, PaymentMethod = 0 }))
             .StatusCode.Should().Be(HttpStatusCode.OK);
     }
 

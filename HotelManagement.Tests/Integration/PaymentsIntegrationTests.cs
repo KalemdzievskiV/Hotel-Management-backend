@@ -103,6 +103,55 @@ public class PaymentsIntegrationTests : IClassFixture<CustomWebApplicationFactor
     }
 
     [Fact]
+    public async Task StaffBookings_AreConfirmedStraightAway_GuestBookingsWaitForApproval()
+    {
+        var hotel = await _api.CreateHotelAsync();
+
+        var staffBooking = await _api.BookAsync(hotel);
+        staffBooking.Status.Should().Be(ReservationStatus.Confirmed);
+        staffBooking.ConfirmedAt.Should().NotBeNull();
+
+        var managerToken = await TestAuth.GetTokenAsync(_api.Client, "Manager", hotelId: hotel.HotelId);
+        var guest = await _api.CreateGuestAsync(hotel);
+        var managerBooking = await _api.PostAsync<ReservationDto>("/api/Reservations", managerToken, new CreateReservationDto
+        {
+            HotelId = hotel.HotelId,
+            RoomId = hotel.RoomId,
+            GuestId = guest.Id,
+            CheckInDate = DateTime.UtcNow.Date.AddDays(30),
+            CheckOutDate = DateTime.UtcNow.Date.AddDays(31),
+            NumberOfGuests = 1
+        });
+        managerBooking.Status.Should().Be(ReservationStatus.Confirmed);
+
+        var guestToken = await TestAuth.GetTokenAsync(_api.Client, "Guest");
+        var profile = await _api.GetAsync<GuestDto>("/api/Guests/me", guestToken);
+        var guestBooking = await _api.PostAsync<ReservationDto>("/api/Reservations", guestToken, new CreateReservationDto
+        {
+            HotelId = hotel.HotelId,
+            RoomId = hotel.RoomId,
+            GuestId = profile.Id,
+            CheckInDate = DateTime.UtcNow.Date.AddDays(40),
+            CheckOutDate = DateTime.UtcNow.Date.AddDays(41),
+            NumberOfGuests = 1
+        });
+        guestBooking.Status.Should().Be(ReservationStatus.Pending);
+    }
+
+    [Fact]
+    public async Task ABookingMadeByMistake_CanBeDeletedUntilMoneyOrACheckInIsRecorded()
+    {
+        var hotel = await _api.CreateHotelAsync();
+        var mistake = await _api.BookAsync(hotel);
+        (await _api.SendAsync(HttpMethod.Delete, $"/api/Reservations/{mistake.Id}", hotel.AdminToken))
+            .StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var stay = await _api.WalkInAsync(hotel);
+        (await _api.SendAsync(HttpMethod.Delete, $"/api/Reservations/{stay.Id}", hotel.AdminToken))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
     public async Task CheckedInStays_CannotBeCancelled()
     {
         var hotel = await _api.CreateHotelAsync();
@@ -113,21 +162,17 @@ public class PaymentsIntegrationTests : IClassFixture<CustomWebApplicationFactor
     }
 
     [Fact]
-    public async Task NoShow_OnlyForConfirmedBookings_AndFreesTheRoom()
+    public async Task NoShow_FreesTheRoom()
     {
         var hotel = await _api.CreateHotelAsync();
         var booking = await _api.BookAsync(hotel, startsInDays: 3, nights: 1);
 
-        (await _api.SendAsync(HttpMethod.Post, $"/api/Reservations/{booking.Id}/noshow", hotel.AdminToken))
-            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
-
-        await _api.PostAsync<ReservationDto>($"/api/Reservations/{booking.Id}/confirm", hotel.AdminToken);
         var noShow = await _api.PostAsync<ReservationDto>($"/api/Reservations/{booking.Id}/noshow", hotel.AdminToken);
         noShow.Status.Should().Be(ReservationStatus.NoShow);
 
         // The same dates can be booked again
         var rebooked = await _api.BookAsync(hotel, startsInDays: 3, nights: 1);
-        rebooked.Status.Should().Be(ReservationStatus.Pending);
+        rebooked.Status.Should().Be(ReservationStatus.Confirmed);
     }
 
     [Fact]
