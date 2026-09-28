@@ -24,6 +24,7 @@ namespace HotelManagement.Data
         public DbSet<Subscription> Subscriptions { get; set; }
         public DbSet<SubscriptionEvent> SubscriptionEvents { get; set; }
         public DbSet<ProcessedBillingEvent> ProcessedBillingEvents { get; set; }
+        public DbSet<RefreshToken> RefreshTokens { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -196,6 +197,17 @@ namespace HotelManagement.Data
                 .HasForeignKey(e => e.ActorUserId)
                 .OnDelete(DeleteBehavior.SetNull)
                 .IsRequired(false);
+
+            // User -> refresh tokens: removed with the user
+            modelBuilder.Entity<RefreshToken>()
+                .HasOne(t => t.User)
+                .WithMany()
+                .HasForeignKey(t => t.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<RefreshToken>()
+                .HasIndex(t => t.TokenHash)
+                .IsUnique();
 
             // Normalize all DateTime values to UTC before writing to PostgreSQL timestamptz columns
             var utcConverter = new ValueConverter<DateTime, DateTime>(

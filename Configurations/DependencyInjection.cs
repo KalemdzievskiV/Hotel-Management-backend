@@ -47,6 +47,7 @@ namespace HotelManagement.Configurations
             services.AddScoped<IUserService, UserService>();
             services.AddScoped<IReservationService, ReservationService>();
             services.AddScoped<ITokenService, TokenService>();
+            services.AddScoped<IRefreshTokenService, RefreshTokenService>();
             services.AddScoped<IReportService, ReportService>();
             services.AddScoped<IInventoryService, InventoryService>();
             services.AddScoped<IHousekeepingService, HousekeepingService>();

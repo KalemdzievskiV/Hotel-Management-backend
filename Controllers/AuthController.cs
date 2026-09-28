@@ -19,6 +19,7 @@ public class AuthController : ControllerBase
     private readonly ITokenService _tokenService;
     private readonly JwtSettings _jwtSettings;
     private readonly IEntitlementService _entitlements;
+    private readonly IRefreshTokenService _refreshTokens;
 
     public AuthController(
         UserManager<ApplicationUser> userManager,
@@ -26,10 +27,12 @@ public class AuthController : ControllerBase
         RoleManager<IdentityRole> roleManager,
         ITokenService tokenService,
         IOptions<JwtSettings> jwtSettings,
-        IEntitlementService entitlements)
+        IEntitlementService entitlements,
+        IRefreshTokenService refreshTokens)
     {
         _jwtSettings = jwtSettings.Value;
         _entitlements = entitlements;
+        _refreshTokens = refreshTokens;
         _userManager = userManager;
         _signInManager = signInManager;
         _roleManager = roleManager;
@@ -117,17 +120,44 @@ public class AuthController : ControllerBase
         return Ok(await CreateAuthResponseAsync(user));
     }
 
-    private async Task<AuthResponseDto> CreateAuthResponseAsync(ApplicationUser user)
+    private async Task<AuthResponseDto> CreateAuthResponseAsync(ApplicationUser user, IssuedRefreshToken? refreshToken = null)
     {
         var roles = await _userManager.GetRolesAsync(user);
+        refreshToken ??= await _refreshTokens.IssueAsync(user);
         return new AuthResponseDto
         {
             Token = _tokenService.GenerateToken(user, roles),
             Email = user.Email!,
             FullName = user.FullName,
             Roles = roles,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpiryMinutes)
+            ExpiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpiryMinutes),
+            RefreshToken = refreshToken.Token,
+            RefreshTokenExpiresAt = refreshToken.ExpiresAt
         };
+    }
+
+    /// <summary>
+    /// Exchanges a refresh token for a new access token and a new refresh token (the old one stops working)
+    /// </summary>
+    [HttpPost("refresh")]
+    public async Task<IActionResult> Refresh([FromBody] RefreshTokenRequestDto request)
+    {
+        var rotated = await _refreshTokens.RotateAsync(request.RefreshToken);
+        if (rotated == null)
+            return Unauthorized(new { message = "Your session has ended. Please sign in again." });
+
+        var (user, refreshToken) = rotated.Value;
+        return Ok(await CreateAuthResponseAsync(user, refreshToken));
+    }
+
+    /// <summary>
+    /// Signs this device out: its refresh token stops working
+    /// </summary>
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout([FromBody] RefreshTokenRequestDto request)
+    {
+        await _refreshTokens.RevokeAsync(request.RefreshToken);
+        return NoContent();
     }
 
     [HttpPost("login")]
