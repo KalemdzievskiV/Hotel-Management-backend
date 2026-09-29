@@ -33,17 +33,13 @@ public class GuestDto
     [MinLength(2, ErrorMessage = "First name must be at least 2 characters")]
     public string FirstName { get; set; } = string.Empty;
     
-    [Required(ErrorMessage = "Last name is required")]
+    // Last name, email and phone are optional: walk-ins often only give a first name
     [MaxLength(100, ErrorMessage = "Last name cannot exceed 100 characters")]
-    [MinLength(2, ErrorMessage = "Last name must be at least 2 characters")]
     public string LastName { get; set; } = string.Empty;
     
-    [Required(ErrorMessage = "Email is required")]
     [MaxLength(200, ErrorMessage = "Email cannot exceed 200 characters")]
-    [EmailAddress(ErrorMessage = "Invalid email format")]
     public string Email { get; set; } = string.Empty;
     
-    [Required(ErrorMessage = "Phone number is required")]
     [MaxLength(50, ErrorMessage = "Phone number cannot exceed 50 characters")]
     public string PhoneNumber { get; set; } = string.Empty;
     

@@ -85,17 +85,21 @@ public class WalkInService : IWalkInService
         if (dto.NewGuest == null)
             throw new ArgumentException("Either ExistingGuestId or NewGuest must be provided");
 
-        // Returning guests are matched by email so their history stays in one profile
-        var existing = await _guestService.GetByEmailAsync(dto.NewGuest.Email);
-        if (existing != null)
-            return existing.Id;
+        // Returning guests are matched by email so their history stays in one profile.
+        // Email is optional; without one we can't tell who they are, so they get a new profile.
+        if (!string.IsNullOrWhiteSpace(dto.NewGuest.Email))
+        {
+            var existing = await _guestService.GetByEmailAsync(dto.NewGuest.Email.Trim());
+            if (existing != null)
+                return existing.Id;
+        }
 
         var created = await _guestService.CreateAsync(new GuestDto
         {
             FirstName = dto.NewGuest.FirstName,
-            LastName = dto.NewGuest.LastName,
-            Email = dto.NewGuest.Email,
-            PhoneNumber = dto.NewGuest.PhoneNumber,
+            LastName = dto.NewGuest.LastName ?? string.Empty,
+            Email = dto.NewGuest.Email ?? string.Empty,
+            PhoneNumber = dto.NewGuest.PhoneNumber ?? string.Empty,
             IdentificationNumber = dto.NewGuest.IdentificationNumber,
             IdentificationType = dto.NewGuest.IdentificationType,
             Nationality = dto.NewGuest.Nationality,

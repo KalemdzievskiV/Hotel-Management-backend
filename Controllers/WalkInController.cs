@@ -81,7 +81,7 @@ public class WalkInController : ControllerBase
         var intelligence = new GuestIntelligenceDto
         {
             GuestId = guest.Id,
-            FullName = $"{guest.FirstName} {guest.LastName}",
+            FullName = $"{guest.FirstName} {guest.LastName}".Trim(),
             Email = guest.Email,
             PhoneNumber = guest.PhoneNumber,
             IsVIP = guest.IsVIP,

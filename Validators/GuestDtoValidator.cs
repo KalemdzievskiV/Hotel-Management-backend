@@ -14,22 +14,23 @@ public class GuestDtoValidator : AbstractValidator<GuestDto>
             .MaximumLength(100).WithMessage("First name cannot exceed 100 characters")
             .Matches(RegisterRequestDtoValidator.NamePattern).WithMessage("First name can only contain letters, spaces, hyphens, apostrophes, and periods");
         
+        // Last name, email and phone are optional (walk-ins); validate them only when given
         RuleFor(x => x.LastName)
-            .NotEmpty().WithMessage("Last name is required")
             .MinimumLength(2).WithMessage("Last name must be at least 2 characters")
             .MaximumLength(100).WithMessage("Last name cannot exceed 100 characters")
-            .Matches(RegisterRequestDtoValidator.NamePattern).WithMessage("Last name can only contain letters, spaces, hyphens, apostrophes, and periods");
+            .Matches(RegisterRequestDtoValidator.NamePattern).WithMessage("Last name can only contain letters, spaces, hyphens, apostrophes, and periods")
+            .When(x => !string.IsNullOrWhiteSpace(x.LastName));
         
         // Contact Information
         RuleFor(x => x.Email)
-            .NotEmpty().WithMessage("Email is required")
             .EmailAddress().WithMessage("Invalid email format")
-            .MaximumLength(200).WithMessage("Email cannot exceed 200 characters");
+            .MaximumLength(200).WithMessage("Email cannot exceed 200 characters")
+            .When(x => !string.IsNullOrWhiteSpace(x.Email));
         
         RuleFor(x => x.PhoneNumber)
-            .NotEmpty().WithMessage("Phone number is required")
             .MaximumLength(50).WithMessage("Phone number cannot exceed 50 characters")
-            .Matches(@"^[\d\s\-\+\(\)\.]+$").WithMessage("Phone number contains invalid characters");
+            .Matches(@"^[\d\s\-\+\(\)\.]+$").WithMessage("Phone number contains invalid characters")
+            .When(x => !string.IsNullOrWhiteSpace(x.PhoneNumber));
         
         // Identification
         RuleFor(x => x.IdentificationNumber)

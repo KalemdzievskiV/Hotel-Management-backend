@@ -52,18 +52,16 @@ public class QuickGuestDto
     [MaxLength(100)]
     public string FirstName { get; set; } = string.Empty;
 
-    [Required]
+    // Optional: a walk-in may only give a first name
     [MaxLength(100)]
-    public string LastName { get; set; } = string.Empty;
+    public string? LastName { get; set; }
 
-    [Required]
     [MaxLength(200)]
     [EmailAddress]
-    public string Email { get; set; } = string.Empty;
+    public string? Email { get; set; }
 
-    [Required]
     [MaxLength(50)]
-    public string PhoneNumber { get; set; } = string.Empty;
+    public string? PhoneNumber { get; set; }
 
     [MaxLength(100)]
     public string? IdentificationNumber { get; set; }

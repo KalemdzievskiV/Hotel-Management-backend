@@ -34,9 +34,10 @@ public class GuestService : CrudService<Guest, GuestDto>, IGuestService
 
     public override async Task<GuestDto> CreateAsync(GuestDto dto)
     {
-        // Validate email uniqueness
-        var isUnique = await IsEmailUniqueAsync(dto.Email);
-        if (!isUnique)
+        NormalizeOptionalContact(dto);
+
+        // Validate email uniqueness (email is optional, so blank ones never clash)
+        if (dto.Email != string.Empty && !await IsEmailUniqueAsync(dto.Email))
         {
             throw new BusinessRuleException($"A guest with email '{dto.Email}' already exists");
         }
@@ -61,8 +62,10 @@ public class GuestService : CrudService<Guest, GuestDto>, IGuestService
         if (existingGuest == null)
             throw new KeyNotFoundException($"Guest with ID {id} not found");
 
+        NormalizeOptionalContact(dto);
+
         // Validate email uniqueness (excluding current guest)
-        if (existingGuest.Email != dto.Email)
+        if (dto.Email != string.Empty && existingGuest.Email != dto.Email)
         {
             var isUnique = await IsEmailUniqueAsync(dto.Email, id);
             if (!isUnique)
@@ -95,6 +98,10 @@ public class GuestService : CrudService<Guest, GuestDto>, IGuestService
 
     public async Task<GuestDto?> GetByEmailAsync(string email)
     {
+        // Many walk-ins have no email; a blank one must not match them all together
+        if (string.IsNullOrWhiteSpace(email))
+            return null;
+
         var guests = await _guestRepository.FindAsync(g => g.Email == email);
         var guest = guests.FirstOrDefault();
 
@@ -136,6 +143,16 @@ public class GuestService : CrudService<Guest, GuestDto>, IGuestService
         var guests = await _guestRepository.FindAsync(
             GuestQueries.VisibleToHotels(hotelIds).And(g => g.IsBlacklisted));
         return _mapper.Map<IEnumerable<GuestDto>>(guests);
+    }
+
+    /// <summary>
+    /// Last name, email and phone are optional but the columns are NOT NULL, so blanks are stored as "".
+    /// </summary>
+    private static void NormalizeOptionalContact(GuestDto dto)
+    {
+        dto.LastName = dto.LastName?.Trim() ?? string.Empty;
+        dto.Email = dto.Email?.Trim() ?? string.Empty;
+        dto.PhoneNumber = dto.PhoneNumber?.Trim() ?? string.Empty;
     }
 
     public async Task<bool> IsEmailUniqueAsync(string email, int? excludeGuestId = null)

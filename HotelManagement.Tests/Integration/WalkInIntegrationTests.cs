@@ -67,6 +67,43 @@ public class WalkInIntegrationTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     [Fact]
+    public async Task QuickCheckIn_WithOnlyAFirstName_GivesEachGuestTheirOwnProfile()
+    {
+        // Two different hotels so each walk-in gets a free room
+        var first = await _api.CreateHotelAsync();
+        var second = await _api.CreateHotelAsync();
+
+        async Task<ReservationDto> WalkInWithFirstNameOnly(TestApi.Hotel hotel, string firstName) =>
+            await _api.PostAsync<ReservationDto>("/api/WalkIn/quick-checkin", hotel.AdminToken, new QuickCheckInDto
+            {
+                HotelId = hotel.HotelId,
+                RoomId = hotel.RoomId,
+                CheckInDate = DateTime.UtcNow.Date,
+                CheckOutDate = DateTime.UtcNow.Date.AddDays(1),
+                NewGuest = new QuickGuestDto { FirstName = firstName }
+            });
+
+        var ana = await WalkInWithFirstNameOnly(first, "Ana");
+        var bojan = await WalkInWithFirstNameOnly(second, "Bojan");
+
+        ana.Status.Should().Be(ReservationStatus.CheckedIn);
+        bojan.Status.Should().Be(ReservationStatus.CheckedIn);
+        // A blank email must not merge the two guests into one profile
+        bojan.GuestId.Should().NotBe(ana.GuestId);
+
+        var guest = await _api.GetAsync<GuestDto>($"/api/Guests/{bojan.GuestId}", second.AdminToken);
+        guest.FirstName.Should().Be("Bojan");
+        guest.LastName.Should().BeEmpty();
+        guest.Email.Should().BeEmpty();
+        guest.PhoneNumber.Should().BeEmpty();
+
+        // ...and the profile can still be edited without filling those in
+        guest.Notes = "Paid cash";
+        var update = await _api.SendAsync(HttpMethod.Put, $"/api/Guests/{guest.Id}", second.AdminToken, guest);
+        update.IsSuccessStatusCode.Should().BeTrue(await update.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
     public async Task OccupiedRoom_IsNotOfferedForTonight()
     {
         var hotel = await _api.CreateHotelAsync();
