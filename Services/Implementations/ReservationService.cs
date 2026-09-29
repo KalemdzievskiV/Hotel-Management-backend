@@ -15,7 +15,8 @@ namespace HotelManagement.Services.Implementations;
 /// <summary>
 /// Reservation lifecycle, availability and money.
 ///
-/// Money rules: TotalAmount = room price - DiscountAmount + ExtraCharges. Every payment and
+/// Money rules: TotalAmount = room price - DiscountAmount + ExtraCharges, where a negative
+/// DiscountAmount is a surcharge (staff charged more than the default). Every payment and
 /// refund is a row in the Payments ledger; DepositAmount is the net amount paid so far and
 /// is only ever changed by recording a payment or refund.
 /// </summary>
@@ -99,7 +100,11 @@ public class ReservationService : IReservationService
             var durationInHours = ValidateStay(room, createDto.CheckInDate, createDto.CheckOutDate, createDto.BookingType, createDto.NumberOfGuests);
             await EnsureAvailableAsync(room, hotel, createDto.CheckInDate, createDto.CheckOutDate, createDto.BookingType);
 
-            var totalAmount = CalculateRoomPrice(room, createDto.CheckInDate, createDto.CheckOutDate, createDto.BookingType);
+            var roomPrice = CalculateRoomPrice(room, createDto.CheckInDate, createDto.CheckOutDate, createDto.BookingType);
+            var (discountAmount, discountReason) = createDto.OverridePrice.HasValue
+                ? PriceOverride(roomPrice, createDto.OverridePrice.Value, createDto.OverridePriceReason)
+                : (0m, null);
+            var totalAmount = roomPrice - discountAmount;
             if (createDto.DepositAmount > totalAmount)
                 throw new BusinessRuleException($"Deposit ({createDto.DepositAmount:0.00}) cannot exceed the total ({totalAmount:0.00})");
 
@@ -116,6 +121,8 @@ public class ReservationService : IReservationService
                 NumberOfGuests = createDto.NumberOfGuests,
                 Status = ReservationStatus.Pending,
                 TotalAmount = totalAmount,
+                DiscountAmount = discountAmount,
+                DiscountReason = discountReason,
                 PaymentMethod = createDto.PaymentMethod,
                 PaymentReference = createDto.PaymentReference,
                 SpecialRequests = createDto.SpecialRequests,
@@ -257,6 +264,18 @@ public class ReservationService : IReservationService
             throw new BusinessRuleException($"Maximum stay for this room is {room.MaximumShortStayHours} hours");
 
         return hours;
+    }
+
+    /// <summary>
+    /// Staff can charge any price instead of the room's default, higher or lower. It's stored as the
+    /// difference from the default (negative = surcharge) so both the default and the change stay visible.
+    /// </summary>
+    private static (decimal DiscountAmount, string? Reason) PriceOverride(decimal roomPrice, decimal overridePrice, string? reason)
+    {
+        if (overridePrice < 0)
+            throw new BusinessRuleException("Price cannot be negative");
+        return (roomPrice - overridePrice,
+            string.IsNullOrWhiteSpace(reason) ? $"Price changed from {roomPrice:0.00} to {overridePrice:0.00}" : reason.Trim());
     }
 
     private static decimal CalculateRoomPrice(Room room, DateTime checkIn, DateTime checkOut, BookingType bookingType)
@@ -695,15 +714,8 @@ public class ReservationService : IReservationService
         var roomPrice = CalculateRoomPrice(reservation.Room, reservation.CheckInDate, reservation.CheckOutDate, reservation.BookingType);
 
         if (overridePrice.HasValue)
-        {
-            if (overridePrice.Value < 0 || overridePrice.Value > roomPrice)
-                throw new BusinessRuleException($"Override price must be between 0 and the room price ({roomPrice:0.00})");
-            // Stored as a discount so the room price and the markdown both stay visible
-            discountAmount = roomPrice - overridePrice.Value;
-            reason ??= $"Price override to {overridePrice.Value:0.00}";
-        }
-
-        if (discountAmount < 0 || discountAmount > roomPrice)
+            (discountAmount, reason) = PriceOverride(roomPrice, overridePrice.Value, reason);
+        else if (discountAmount < 0 || discountAmount > roomPrice)
             throw new BusinessRuleException($"Discount must be between 0 and the room price ({roomPrice:0.00})");
 
         reservation.DiscountAmount = discountAmount;

@@ -194,6 +194,20 @@ public class GuestSelfServiceIntegrationTests : IClassFixture<CustomWebApplicati
     }
 
     [Fact]
+    public async Task Guest_CannotSetTheirOwnPrice()
+    {
+        var hotel = await _api.CreateHotelAsync();
+        var (auth, _) = await SignInGuestAsync();
+
+        var booking = Booking(hotel, DateTime.UtcNow.Date.AddDays(10));
+        booking.OverridePrice = 1;
+        var booked = await _api.PostAsync<ReservationDto>("/api/Reservations", auth.Token, booking);
+
+        booked.TotalAmount.Should().Be(200, "only staff can change the price");
+        booked.DiscountAmount.Should().Be(0);
+    }
+
+    [Fact]
     public async Task Guest_CannotBookInThePast()
     {
         var hotel = await _api.CreateHotelAsync();

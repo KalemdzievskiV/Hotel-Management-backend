@@ -79,6 +79,9 @@ public class ReservationsController : ControllerBase
             createDto.DepositAmount = 0;
             createDto.PaymentReference = null;
             createDto.Notes = null;
+            // ...and only staff can set the price
+            createDto.OverridePrice = null;
+            createDto.OverridePriceReason = null;
         }
         else if (!await _hotelAccess.CanAccessHotelAsync(createDto.HotelId))
         {

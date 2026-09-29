@@ -46,4 +46,14 @@ public class CreateReservationDto
     
     [MaxLength(1000, ErrorMessage = "Notes cannot exceed 1000 characters")]
     public string? Notes { get; set; }
+
+    /// <summary>
+    /// Staff only: the price to charge instead of the room's default, higher or lower.
+    /// Ignored for guests' own bookings.
+    /// </summary>
+    [Range(0, 1000000, ErrorMessage = "Price must be between 0 and 1,000,000")]
+    public decimal? OverridePrice { get; set; }
+
+    [MaxLength(200, ErrorMessage = "Price change reason cannot exceed 200 characters")]
+    public string? OverridePriceReason { get; set; }
 }

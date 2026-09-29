@@ -83,9 +83,10 @@ public class Reservation
     [MaxLength(100)]
     public string? PaymentReference { get; set; } // Transaction ID, reference number
     
-    // Discount (Walk-In Pricing Tools)
+    // Price adjustment against the room's default price: positive = discount,
+    // negative = surcharge (staff set a price above the default)
     [Column(TypeName = "decimal(10,2)")]
-    [Range(0, 1000000)]
+    [Range(-1000000, 1000000)]
     public decimal DiscountAmount { get; set; } = 0;
 
     [MaxLength(200)]
