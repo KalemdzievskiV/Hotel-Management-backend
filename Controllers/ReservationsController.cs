@@ -68,6 +68,10 @@ public class ReservationsController : ControllerBase
     {
         if (User.IsInRole(AppRoles.Guest))
         {
+            // A day of slack: the guest's "today" can be behind UTC
+            if (createDto.CheckInDate.Date < DateTime.UtcNow.Date.AddDays(-1))
+                return BadRequest(new { message = "Check-in can't be in the past" });
+
             var myProfile = await _guestService.GetOrCreateGuestProfileAsync(CurrentUserId!);
             createDto.GuestId = myProfile.Id;
 
@@ -333,6 +337,15 @@ public class ReservationsController : ControllerBase
     {
         if (!await CanAccessReservationAsync(id))
             return Forbid();
+
+        // Once the stay has started, a guest who can't come is the hotel's call (no-show or a
+        // shortened stay), not something to undo from the app
+        if (User.IsInRole(AppRoles.Guest))
+        {
+            var reservation = await _reservationService.GetReservationByIdAsync(id);
+            if (reservation != null && reservation.CheckInDate.Date < DateTime.UtcNow.Date)
+                return BadRequest(new { message = "This stay has already started. Please contact the hotel to change it." });
+        }
 
         return Ok(await _reservationService.CancelReservationAsync(id, request.Reason));
     }

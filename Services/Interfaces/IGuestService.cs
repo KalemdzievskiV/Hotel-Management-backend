@@ -83,4 +83,9 @@ public interface IGuestService : ICrudService<GuestDto>
     /// Returns existing guest if found by UserId, creates new one if not
     /// </summary>
     Task<GuestDto> GetOrCreateGuestProfileAsync(string userId);
+
+    /// <summary>
+    /// A guest edits their own details; the account's name and phone change with them
+    /// </summary>
+    Task<GuestDto> UpdateMyProfileAsync(string userId, UpdateMyProfileDto dto);
 }

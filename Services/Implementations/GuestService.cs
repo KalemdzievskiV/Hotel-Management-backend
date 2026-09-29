@@ -243,4 +243,35 @@ public class GuestService : CrudService<Guest, GuestDto>, IGuestService
 
         return _mapper.Map<GuestDto>(newGuest);
     }
+
+    public async Task<GuestDto> UpdateMyProfileAsync(string userId, UpdateMyProfileDto dto)
+    {
+        var profile = await GetOrCreateGuestProfileAsync(userId);
+        var guest = await _context.Guests.FirstAsync(g => g.Id == profile.Id);
+        var user = await _context.Users.FindAsync(userId)
+            ?? throw new KeyNotFoundException($"User with ID {userId} not found");
+
+        var phone = dto.PhoneNumber?.Trim() ?? string.Empty;
+
+        guest.FirstName = dto.FirstName.Trim();
+        guest.LastName = dto.LastName.Trim();
+        guest.PhoneNumber = phone;
+        guest.DateOfBirth = dto.DateOfBirth;
+        guest.Nationality = Blank(dto.Nationality);
+        guest.Address = Blank(dto.Address);
+        guest.City = Blank(dto.City);
+        guest.Country = Blank(dto.Country);
+        guest.PostalCode = Blank(dto.PostalCode);
+        guest.UpdatedAt = DateTime.UtcNow;
+
+        user.FirstName = guest.FirstName;
+        user.LastName = guest.LastName;
+        user.PhoneNumber = phone == string.Empty ? null : phone;
+        user.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+        return _mapper.Map<GuestDto>(guest);
+    }
+
+    private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

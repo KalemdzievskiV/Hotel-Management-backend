@@ -3,6 +3,7 @@ using HotelManagement.Models.Constants;
 using HotelManagement.Models.DTOs.Auth;
 using HotelManagement.Models.Entities;
 using HotelManagement.Services.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -158,6 +159,33 @@ public class AuthController : ControllerBase
     {
         await _refreshTokens.RevokeAsync(request.RefreshToken);
         return NoContent();
+    }
+
+    /// <summary>
+    /// Changes the signed-in user's password. Every other sign-in ends (the security stamp
+    /// changes, so their refresh tokens stop working); this device gets new tokens.
+    /// </summary>
+    [HttpPost("change-password")]
+    [Authorize]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequestDto request)
+    {
+        var user = await _userManager.GetUserAsync(User);
+        if (user == null || !user.IsActive)
+            return Unauthorized(new { message = "Your session has ended. Please sign in again." });
+
+        var result = await _userManager.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
+        if (!result.Succeeded)
+        {
+            var wrongPassword = result.Errors.Any(e => e.Code == nameof(IdentityErrorDescriber.PasswordMismatch));
+            return BadRequest(new
+            {
+                message = wrongPassword
+                    ? "Your current password is incorrect"
+                    : string.Join(" ", result.Errors.Select(e => e.Description))
+            });
+        }
+
+        return Ok(await CreateAuthResponseAsync(user));
     }
 
     [HttpPost("login")]

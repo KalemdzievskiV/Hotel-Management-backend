@@ -218,6 +218,20 @@ public class GuestsController : CrudController<GuestDto>
 
         return Ok(await _guestService.GetOrCreateGuestProfileAsync(userId));
     }
+
+    /// <summary>
+    /// The current user edits their own guest profile (name, phone, address); not the email
+    /// </summary>
+    [HttpPut("me")]
+    [Authorize]
+    public async Task<IActionResult> UpdateMyGuestProfileAsync([FromBody] UpdateMyProfileDto dto)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        return Ok(await _guestService.UpdateMyProfileAsync(userId, dto));
+    }
 }
 
 public class BlacklistRequest
