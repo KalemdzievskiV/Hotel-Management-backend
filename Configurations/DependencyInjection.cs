@@ -54,7 +54,16 @@ namespace HotelManagement.Configurations
             services.AddScoped<IWalkInService, WalkInService>();
             services.AddScoped<IDashboardService, DashboardService>();
             services.AddScoped<IEntitlementService, EntitlementService>();
+            services.AddScoped<INotificationService, NotificationService>();
             services.AddSingleton(TimeProvider.System);
+
+            // Push: requests queue pushes, a background service sends them through Expo
+            services.Configure<Services.Push.PushOptions>(configuration.GetSection(Services.Push.PushOptions.SectionName));
+            services.AddSingleton<Services.Push.PushQueue>();
+            services.AddSingleton<Services.Push.IPushQueue>(sp => sp.GetRequiredService<Services.Push.PushQueue>());
+            services.AddHttpClient<Services.Push.IExpoPushClient, Services.Push.ExpoPushClient>(client =>
+                client.Timeout = TimeSpan.FromSeconds(15));
+            services.AddHostedService<Services.Push.PushDispatcher>();
 
             // Billing: the fake provider stands in until a real payment provider is chosen
             services.Configure<Services.Billing.BillingOptions>(configuration.GetSection(Services.Billing.BillingOptions.SectionName));

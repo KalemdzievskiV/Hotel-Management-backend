@@ -1,5 +1,6 @@
 using HotelManagement.Models.Constants;
 using HotelManagement.Models.DTOs;
+using HotelManagement.Models.Enums;
 using HotelManagement.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -21,11 +22,16 @@ public class HousekeepingController : ControllerBase
 
     private readonly IHousekeepingService _housekeepingService;
     private readonly IHotelAccessService _hotelAccess;
+    private readonly INotificationService _notifications;
 
-    public HousekeepingController(IHousekeepingService housekeepingService, IHotelAccessService hotelAccess)
+    public HousekeepingController(
+        IHousekeepingService housekeepingService,
+        IHotelAccessService hotelAccess,
+        INotificationService notifications)
     {
         _housekeepingService = housekeepingService;
         _hotelAccess = hotelAccess;
+        _notifications = notifications;
     }
 
     private async Task<bool> CanAccessTaskAsync(int taskId)
@@ -63,6 +69,7 @@ public class HousekeepingController : ControllerBase
 
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
         var task = await _housekeepingService.CreateTaskAsync(dto, userId);
+        await _notifications.TaskAssignedAsync(task);
         return CreatedAtAction(nameof(GetById), new { id = task.Id }, task);
     }
 
@@ -70,10 +77,19 @@ public class HousekeepingController : ControllerBase
     [Authorize(Roles = ManagementRoles)]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateHousekeepingTaskDto dto)
     {
-        if (!await CanAccessTaskAsync(id))
+        var before = await _housekeepingService.GetTaskByIdAsync(id);
+        if (before == null || !await _hotelAccess.CanAccessHotelAsync(before.HotelId))
             return NotFound();
 
-        return Ok(await _housekeepingService.UpdateTaskAsync(id, dto));
+        var task = await _housekeepingService.UpdateTaskAsync(id, dto);
+
+        // Tell whoever has the task now if it's new to them, or if it just became urgent
+        if (task.AssignedToUserId != null && task.AssignedToUserId != before.AssignedToUserId)
+            await _notifications.TaskAssignedAsync(task);
+        else if (task.Priority == HousekeepingTaskPriority.Urgent && before.Priority != HousekeepingTaskPriority.Urgent)
+            await _notifications.TaskBecameUrgentAsync(task);
+
+        return Ok(task);
     }
 
     [HttpDelete("{id}")]

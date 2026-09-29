@@ -27,6 +27,7 @@ public class ReservationsController : ControllerBase
     private readonly IHotelAccessService _hotelAccess;
     private readonly IAuthorizationService _authorizationService;
     private readonly IEntitlementService _entitlements;
+    private readonly INotificationService _notifications;
 
     public ReservationsController(
         IReservationService reservationService,
@@ -34,9 +35,11 @@ public class ReservationsController : ControllerBase
         IGuestService guestService,
         IHotelAccessService hotelAccess,
         IAuthorizationService authorizationService,
-        IEntitlementService entitlements)
+        IEntitlementService entitlements,
+        INotificationService notifications)
     {
         _entitlements = entitlements;
+        _notifications = notifications;
         _reservationService = reservationService;
         _roomService = roomService;
         _guestService = guestService;
@@ -93,6 +96,8 @@ public class ReservationsController : ControllerBase
         // Staff are the ones who would approve it anyway; only guests' online bookings wait for approval
         if (!User.IsInRole(AppRoles.Guest))
             reservation = await _reservationService.ConfirmReservationAsync(reservation.Id);
+        else
+            await _notifications.BookingRequestedAsync(reservation);
 
         return CreatedAtAction(nameof(GetReservationById), new { id = reservation.Id }, reservation);
     }
@@ -309,7 +314,9 @@ public class ReservationsController : ControllerBase
         if (!await CanAccessReservationAsync(id))
             return Forbid();
 
-        return Ok(await _reservationService.ConfirmReservationAsync(id));
+        var reservation = await _reservationService.ConfirmReservationAsync(id);
+        await _notifications.BookingConfirmedAsync(reservation);
+        return Ok(reservation);
     }
 
     [HttpPost("{id:int}/checkin")]
@@ -350,7 +357,9 @@ public class ReservationsController : ControllerBase
                 return BadRequest(new { message = "This stay has already started. Please contact the hotel to change it." });
         }
 
-        return Ok(await _reservationService.CancelReservationAsync(id, request.Reason));
+        var cancelled = await _reservationService.CancelReservationAsync(id, request.Reason);
+        await _notifications.BookingCancelledAsync(cancelled, byGuest: User.IsInRole(AppRoles.Guest));
+        return Ok(cancelled);
     }
 
     [HttpPost("{id:int}/noshow")]

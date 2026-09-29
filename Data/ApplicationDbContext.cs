@@ -25,6 +25,9 @@ namespace HotelManagement.Data
         public DbSet<SubscriptionEvent> SubscriptionEvents { get; set; }
         public DbSet<ProcessedBillingEvent> ProcessedBillingEvents { get; set; }
         public DbSet<RefreshToken> RefreshTokens { get; set; }
+        public DbSet<Notification> Notifications { get; set; }
+        public DbSet<DeviceToken> DeviceTokens { get; set; }
+        public DbSet<NotificationPreference> NotificationPreferences { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -207,6 +210,36 @@ namespace HotelManagement.Data
 
             modelBuilder.Entity<RefreshToken>()
                 .HasIndex(t => t.TokenHash)
+                .IsUnique();
+
+            // User -> notifications, devices, push settings: removed with the user
+            modelBuilder.Entity<Notification>()
+                .HasOne(n => n.User)
+                .WithMany()
+                .HasForeignKey(n => n.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<Notification>()
+                .HasIndex(n => new { n.UserId, n.CreatedAt });
+
+            modelBuilder.Entity<DeviceToken>()
+                .HasOne(d => d.User)
+                .WithMany()
+                .HasForeignKey(d => d.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<DeviceToken>()
+                .HasIndex(d => d.Token)
+                .IsUnique();
+
+            modelBuilder.Entity<NotificationPreference>()
+                .HasOne(p => p.User)
+                .WithMany()
+                .HasForeignKey(p => p.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<NotificationPreference>()
+                .HasIndex(p => new { p.UserId, p.Type })
                 .IsUnique();
 
             // Normalize all DateTime values to UTC before writing to PostgreSQL timestamptz columns
