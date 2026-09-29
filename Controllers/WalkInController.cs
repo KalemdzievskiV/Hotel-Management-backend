@@ -36,13 +36,14 @@ public class WalkInController : ControllerBase
         _context = context;
     }
 
+    /// <summary>Rooms free tonight; `date` is the hotel's today (defaults to the server's UTC date)</summary>
     [HttpGet("available-rooms/{hotelId}")]
-    public async Task<IActionResult> GetAvailableRoomsTonight(int hotelId)
+    public async Task<IActionResult> GetAvailableRoomsTonight(int hotelId, [FromQuery] DateTime? date)
     {
         if (!await _hotelAccess.CanAccessHotelAsync(hotelId))
             return Forbid();
 
-        var today = DateTime.UtcNow.Date;
+        var today = date?.Date ?? DateTime.UtcNow.Date;
         var tomorrow = today.AddDays(1);
         var rooms = await _reservationService.GetAvailableRoomsAsync(hotelId, today, tomorrow, BookingType.Daily);
         return Ok(rooms);

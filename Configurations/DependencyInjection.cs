@@ -52,6 +52,7 @@ namespace HotelManagement.Configurations
             services.AddScoped<IInventoryService, InventoryService>();
             services.AddScoped<IHousekeepingService, HousekeepingService>();
             services.AddScoped<IWalkInService, WalkInService>();
+            services.AddScoped<IDashboardService, DashboardService>();
             services.AddScoped<IEntitlementService, EntitlementService>();
             services.AddSingleton(TimeProvider.System);
 

@@ -24,6 +24,13 @@ public interface IReservationService
     Task<IEnumerable<ReservationDto>> GetGuestUserReservationsAsync(string userId);
     Task<IEnumerable<ReservationDto>> GetCheckInsOnAsync(DateTime day, IReadOnlyCollection<int> hotelIds);
     Task<IEnumerable<ReservationDto>> GetCheckOutsOnAsync(DateTime day, IReadOnlyCollection<int> hotelIds);
+
+    /// <summary>
+    /// One page of a hotel's bookings for the front desk. Segments: arrivals, departures,
+    /// inhouse, upcoming, pending, all (relative to <paramref name="day"/>, the hotel's today).
+    /// <paramref name="query"/> matches guest name, email or phone, room number or booking number.
+    /// </summary>
+    Task<PagedResult<ReservationDto>> SearchReservationsAsync(int hotelId, string segment, string? query, DateTime day, int page, int pageSize);
     
     // Room Availability
     Task<bool> IsRoomAvailableAsync(int roomId, DateTime checkIn, DateTime checkOut, int? excludeReservationId = null);

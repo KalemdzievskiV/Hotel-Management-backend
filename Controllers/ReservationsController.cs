@@ -424,20 +424,62 @@ public class ReservationsController : ControllerBase
         return Ok(await _reservationService.GetReservationCountByMonthAsync(year, hotelIds));
     }
 
+    /// <summary>
+    /// Today's arrivals. `hotelId` narrows it to one hotel; `date` is the hotel's today
+    /// (defaults to the server's UTC date, which is wrong in the evening east or west of UTC).
+    /// </summary>
     [HttpGet("today/check-ins")]
     [Authorize(Roles = ManagementRoles)]
-    public async Task<IActionResult> GetTodaysCheckIns()
+    public async Task<IActionResult> GetTodaysCheckIns([FromQuery] int? hotelId, [FromQuery] DateTime? date)
     {
-        var hotelIds = await _hotelAccess.GetAccessibleHotelIdsAsync();
-        return Ok(await _reservationService.GetCheckInsOnAsync(DateTime.UtcNow.Date, hotelIds));
+        var hotelIds = await ScopeHotelsAsync(hotelId);
+        if (hotelIds == null)
+            return Forbid();
+        return Ok(await _reservationService.GetCheckInsOnAsync(date?.Date ?? DateTime.UtcNow.Date, hotelIds));
     }
 
+    /// <summary>Today's departures; same parameters as today/check-ins</summary>
     [HttpGet("today/check-outs")]
     [Authorize(Roles = ManagementRoles)]
-    public async Task<IActionResult> GetTodaysCheckOuts()
+    public async Task<IActionResult> GetTodaysCheckOuts([FromQuery] int? hotelId, [FromQuery] DateTime? date)
     {
-        var hotelIds = await _hotelAccess.GetAccessibleHotelIdsAsync();
-        return Ok(await _reservationService.GetCheckOutsOnAsync(DateTime.UtcNow.Date, hotelIds));
+        var hotelIds = await ScopeHotelsAsync(hotelId);
+        if (hotelIds == null)
+            return Forbid();
+        return Ok(await _reservationService.GetCheckOutsOnAsync(date?.Date ?? DateTime.UtcNow.Date, hotelIds));
+    }
+
+    /// <summary>
+    /// One page of a hotel's bookings for the front desk, by segment (arrivals, departures,
+    /// inhouse, upcoming, pending, all) with an optional search
+    /// </summary>
+    [HttpGet("search")]
+    [Authorize(Roles = ManagementRoles)]
+    public async Task<IActionResult> Search(
+        [FromQuery] int hotelId,
+        [FromQuery] string segment = "all",
+        [FromQuery] string? q = null,
+        [FromQuery] DateTime? date = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 25)
+    {
+        segment = segment.ToLowerInvariant();
+        if (!ReservationSegments.Values.Contains(segment))
+            return BadRequest(new { message = $"segment must be one of: {string.Join(", ", ReservationSegments.Values)}" });
+        if (page < 1 || pageSize < 1 || pageSize > 100)
+            return BadRequest(new { message = "page must be 1 or more and pageSize between 1 and 100" });
+        if (!await _hotelAccess.CanAccessHotelAsync(hotelId))
+            return Forbid();
+
+        return Ok(await _reservationService.SearchReservationsAsync(hotelId, segment, q, date?.Date ?? DateTime.UtcNow.Date, page, pageSize));
+    }
+
+    /// <summary>The caller's hotels, or just <paramref name="hotelId"/>; null when they can't access it</summary>
+    private async Task<IReadOnlyCollection<int>?> ScopeHotelsAsync(int? hotelId)
+    {
+        if (hotelId == null)
+            return await _hotelAccess.GetAccessibleHotelIdsAsync();
+        return await _hotelAccess.CanAccessHotelAsync(hotelId.Value) ? new[] { hotelId.Value } : null;
     }
 
     /// <summary>

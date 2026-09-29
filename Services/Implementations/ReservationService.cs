@@ -1,6 +1,7 @@
 using AutoMapper;
 using HotelManagement.Data;
 using HotelManagement.Infrastructure.Exceptions;
+using HotelManagement.Models.Constants;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Models.Enums;
@@ -453,6 +454,59 @@ public class ReservationService : IReservationService
                 && r.CheckInDate >= start && r.CheckInDate < end
                 && (r.Status == ReservationStatus.Confirmed || r.Status == ReservationStatus.CheckedIn))
             .OrderBy(r => r.CheckInDate));
+    }
+
+    public async Task<PagedResult<ReservationDto>> SearchReservationsAsync(int hotelId, string segment, string? query, DateTime day, int page, int pageSize)
+    {
+        var start = day.Date;
+        var end = start.AddDays(1);
+        var reservations = QueryWithDetails().Where(r => r.HotelId == hotelId);
+
+        reservations = segment switch
+        {
+            ReservationSegments.Arrivals => reservations
+                .Where(r => r.CheckInDate >= start && r.CheckInDate < end
+                    && (r.Status == ReservationStatus.Pending || r.Status == ReservationStatus.Confirmed || r.Status == ReservationStatus.CheckedIn))
+                .OrderBy(r => r.CheckInDate),
+            ReservationSegments.Departures => reservations
+                .Where(r => r.CheckOutDate >= start && r.CheckOutDate < end
+                    && (r.Status == ReservationStatus.CheckedIn || r.Status == ReservationStatus.CheckedOut))
+                .OrderBy(r => r.CheckOutDate),
+            ReservationSegments.InHouse => reservations
+                .Where(r => r.Status == ReservationStatus.CheckedIn)
+                .OrderBy(r => r.CheckOutDate),
+            ReservationSegments.Upcoming => reservations
+                .Where(r => r.CheckInDate >= end
+                    && (r.Status == ReservationStatus.Pending || r.Status == ReservationStatus.Confirmed))
+                .OrderBy(r => r.CheckInDate),
+            ReservationSegments.Pending => reservations
+                .Where(r => r.Status == ReservationStatus.Pending)
+                .OrderBy(r => r.CheckInDate),
+            _ => reservations.OrderByDescending(r => r.CheckInDate)
+        };
+
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            // ToLower().Contains() is a case-insensitive LIKE on Postgres and also runs in memory in tests
+            var term = query.Trim().ToLower();
+            var id = int.TryParse(term.TrimStart('#'), out var number) ? number : (int?)null;
+            reservations = reservations.Where(r =>
+                (r.Guest.FirstName + " " + r.Guest.LastName).ToLower().Contains(term)
+                || r.Guest.Email.ToLower().Contains(term)
+                || r.Guest.PhoneNumber.Contains(term)
+                || r.Room.RoomNumber.ToLower() == term
+                || (id != null && r.Id == id));
+        }
+
+        var total = await reservations.CountAsync();
+        var items = await reservations.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+        return new PagedResult<ReservationDto>
+        {
+            Items = items.Select(MapToDto).ToList(),
+            TotalCount = total,
+            Page = page,
+            PageSize = pageSize
+        };
     }
 
     public Task<IEnumerable<ReservationDto>> GetCheckOutsOnAsync(DateTime day, IReadOnlyCollection<int> hotelIds)
