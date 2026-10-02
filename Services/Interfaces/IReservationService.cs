@@ -31,6 +31,13 @@ public interface IReservationService
     /// <paramref name="query"/> matches guest name, email or phone, room number or booking number.
     /// </summary>
     Task<PagedResult<ReservationDto>> SearchReservationsAsync(int hotelId, string segment, string? query, DateTime day, int page, int pageSize);
+
+    /// <summary>
+    /// One page of the reservations list, newest first. Pass <paramref name="guestUserId"/> for a guest's
+    /// own bookings or <paramref name="hotelIds"/> for staff; <paramref name="query"/> searches guest, room and id
+    /// </summary>
+    Task<PagedResult<ReservationDto>> GetReservationsPageAsync(
+        IReadOnlyCollection<int>? hotelIds, string? guestUserId, ReservationStatus? status, string? query, int page, int pageSize);
     
     // Room Availability
     Task<bool> IsRoomAvailableAsync(int roomId, DateTime checkIn, DateTime checkOut, int? excludeReservationId = null);

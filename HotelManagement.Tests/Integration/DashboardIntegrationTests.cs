@@ -227,4 +227,75 @@ public class DashboardIntegrationTests : IClassFixture<CustomWebApplicationFacto
     }
 
     #endregion
+
+    #region Paged list
+
+    [Fact]
+    public async Task Paged_FiltersByStatusAndText_AndPagesNewestFirst()
+    {
+        var hotel = await _api.CreateHotelAsync();
+        var second = await AddRoomAsync(hotel, "102");
+        var walkIn = await _api.WalkInAsync(hotel, nights: 2);
+        var novak = await BookAsync(hotel, second.Id, Today.AddDays(3), nights: 1, lastName: "Novak");
+        var horvat = await BookAsync(hotel, second.Id, Today.AddDays(10), nights: 1, lastName: "Horvat");
+
+        async Task<PagedResult<ReservationDto>> Page(string query) =>
+            await _api.GetAsync<PagedResult<ReservationDto>>($"/api/Reservations/paged?hotelId={hotel.HotelId}&{query}", hotel.AdminToken);
+
+        var first = await Page("pageSize=2&page=1");
+        first.TotalCount.Should().Be(3);
+        first.HasMore.Should().BeTrue();
+        first.Items.Select(r => r.Id).Should().Equal(horvat.Id, novak.Id);
+        (await Page("pageSize=2&page=2")).Items.Select(r => r.Id).Should().Equal(walkIn.Id);
+
+        (await Page($"status={(int)ReservationStatus.CheckedIn}")).Items.Should().ContainSingle().Which.Id.Should().Be(walkIn.Id);
+        (await Page("q=horv")).Items.Should().ContainSingle().Which.Id.Should().Be(horvat.Id);
+        (await Page($"q=%23{novak.Id}")).Items.Should().ContainSingle().Which.Id.Should().Be(novak.Id);
+        (await Page("q=102")).TotalCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Paged_WithoutHotelId_CoversEveryHotelTheCallerCanSee()
+    {
+        var first = await _api.CreateHotelAsync();
+        var second = await _api.CreateHotelAsync();
+        var mine = await _api.WalkInAsync(first);
+        var theirs = await _api.WalkInAsync(second);
+
+        var page = await _api.GetAsync<PagedResult<ReservationDto>>("/api/Reservations/paged", first.AdminToken);
+        page.Items.Select(r => r.Id).Should().Contain(mine.Id).And.NotContain(theirs.Id);
+
+        (await _api.SendAsync(HttpMethod.Get, $"/api/Reservations/paged?hotelId={second.HotelId}", first.AdminToken))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Paged_ForAGuest_OnlyReturnsTheirOwnBookings()
+    {
+        var hotel = await _api.CreateHotelAsync();
+        var second = await AddRoomAsync(hotel, "102");
+        var someoneElse = await _api.WalkInAsync(hotel);
+        var guestToken = await TestAuth.GetTokenAsync(_api.Client, "Guest");
+        var own = await _api.PostAsync<ReservationDto>("/api/Reservations", guestToken, new CreateReservationDto
+        {
+            HotelId = hotel.HotelId,
+            RoomId = second.Id,
+            CheckInDate = Today.AddDays(5),
+            CheckOutDate = Today.AddDays(7),
+            NumberOfGuests = 1
+        });
+
+        var page = await _api.GetAsync<PagedResult<ReservationDto>>("/api/Reservations/paged?pageSize=100", guestToken);
+        page.Items.Select(r => r.Id).Should().Contain(own.Id).And.NotContain(someoneElse.Id);
+    }
+
+    [Fact]
+    public async Task Paged_WithTooLargeAPage_IsRejected()
+    {
+        var hotel = await _api.CreateHotelAsync();
+        (await _api.SendAsync(HttpMethod.Get, "/api/Reservations/paged?pageSize=500", hotel.AdminToken))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    #endregion
 }

@@ -137,6 +137,35 @@ public class ReservationsController : ControllerBase
     }
 
     /// <summary>
+    /// One page of the reservations visible to the current user, newest first, filtered by
+    /// hotel, status and a search over guest, room and booking id
+    /// </summary>
+    [HttpGet("paged")]
+    public async Task<IActionResult> GetReservationsPage(
+        [FromQuery] int? hotelId,
+        [FromQuery] ReservationStatus? status,
+        [FromQuery] string? q = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 25)
+    {
+        if (page < 1 || pageSize < 1 || pageSize > 100)
+            return BadRequest(new { message = "page must be 1 or more and pageSize between 1 and 100" });
+
+        if (User.IsInRole(AppRoles.Guest))
+            return Ok(await _reservationService.GetReservationsPageAsync(null, CurrentUserId!, status, q, page, pageSize));
+
+        if (User.IsInRole(AppRoles.SuperAdmin) || User.IsInRole(AppRoles.Admin) || User.IsInRole(AppRoles.Manager))
+        {
+            var hotelIds = await ScopeHotelsAsync(hotelId);
+            if (hotelIds == null)
+                return Forbid();
+            return Ok(await _reservationService.GetReservationsPageAsync(hotelIds, null, status, q, page, pageSize));
+        }
+
+        return Ok(new PagedResult<ReservationDto> { Page = page, PageSize = pageSize });
+    }
+
+    /// <summary>
     /// Update a reservation (with authorization check)
     /// </summary>
     [HttpPut("{id:int}")]

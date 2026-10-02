@@ -504,19 +504,44 @@ public class ReservationService : IReservationService
             _ => reservations.OrderByDescending(r => r.CheckInDate)
         };
 
-        if (!string.IsNullOrWhiteSpace(query))
-        {
-            // ToLower().Contains() is a case-insensitive LIKE on Postgres and also runs in memory in tests
-            var term = query.Trim().ToLower();
-            var id = int.TryParse(term.TrimStart('#'), out var number) ? number : (int?)null;
-            reservations = reservations.Where(r =>
-                (r.Guest.FirstName + " " + r.Guest.LastName).ToLower().Contains(term)
-                || r.Guest.Email.ToLower().Contains(term)
-                || r.Guest.PhoneNumber.Contains(term)
-                || r.Room.RoomNumber.ToLower() == term
-                || (id != null && r.Id == id));
-        }
+        return await ToPageAsync(ApplySearch(reservations, query), page, pageSize);
+    }
 
+    public async Task<PagedResult<ReservationDto>> GetReservationsPageAsync(
+        IReadOnlyCollection<int>? hotelIds, string? guestUserId, ReservationStatus? status, string? query, int page, int pageSize)
+    {
+        var reservations = QueryWithDetails();
+        if (guestUserId != null)
+            reservations = reservations.Where(r => r.Guest.UserId == guestUserId);
+        if (hotelIds != null)
+            reservations = reservations.Where(r => hotelIds.Contains(r.HotelId));
+        if (status != null)
+            reservations = reservations.Where(r => r.Status == status);
+
+        // Same order as the unpaged list; Id breaks ties so pages never overlap
+        reservations = reservations.OrderByDescending(r => r.CreatedAt).ThenByDescending(r => r.Id);
+        return await ToPageAsync(ApplySearch(reservations, query), page, pageSize);
+    }
+
+    /// <summary>Matches guest name, email or phone, an exact room number, or a booking id ("#12" or "12")</summary>
+    private static IQueryable<Reservation> ApplySearch(IQueryable<Reservation> reservations, string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return reservations;
+
+        // ToLower().Contains() is a case-insensitive LIKE on Postgres and also runs in memory in tests
+        var term = query.Trim().ToLower();
+        var id = int.TryParse(term.TrimStart('#'), out var number) ? number : (int?)null;
+        return reservations.Where(r =>
+            (r.Guest.FirstName + " " + r.Guest.LastName).ToLower().Contains(term)
+            || r.Guest.Email.ToLower().Contains(term)
+            || r.Guest.PhoneNumber.Contains(term)
+            || r.Room.RoomNumber.ToLower() == term
+            || (id != null && r.Id == id));
+    }
+
+    private async Task<PagedResult<ReservationDto>> ToPageAsync(IQueryable<Reservation> reservations, int page, int pageSize)
+    {
         var total = await reservations.CountAsync();
         var items = await reservations.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
         return new PagedResult<ReservationDto>
