@@ -64,9 +64,8 @@ public class AvailabilityTests
             PricePerNight = 150,
             Status = RoomStatus.Available,
             AllowsShortStay = true,
-            ShortStayHourlyRate = 25,
-            MinimumShortStayHours = 2,
-            MaximumShortStayHours = 12
+            ShortStayHours = 4,
+            ShortStayPrice = 100
         };
 
         var guest = new Guest
@@ -377,7 +376,7 @@ public class AvailabilityTests
             PricePerNight = 250,
             Status = RoomStatus.Available,
             AllowsShortStay = true,
-            ShortStayHourlyRate = 40
+            ShortStayHours = 4, ShortStayPrice = 160
         });
         
         _context.Rooms.Add(new Room

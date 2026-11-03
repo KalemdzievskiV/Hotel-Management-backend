@@ -237,7 +237,7 @@ public class ReservationService : IReservationService
     /// <summary>
     /// Validates dates, duration and capacity for a stay; returns the short-stay duration in hours
     /// </summary>
-    private static int? ValidateStay(Room room, DateTime checkIn, DateTime checkOut, BookingType bookingType, int numberOfGuests)
+    private int? ValidateStay(Room room, DateTime checkIn, DateTime checkOut, BookingType bookingType, int numberOfGuests)
     {
         if (numberOfGuests > room.Capacity)
             throw new BusinessRuleException($"Room capacity is {room.Capacity} guests, but {numberOfGuests} guests requested");
@@ -257,14 +257,19 @@ public class ReservationService : IReservationService
 
         var hours = (int)Math.Ceiling((checkOut - checkIn).TotalHours);
 
-        if (room.MinimumShortStayHours.HasValue && hours < room.MinimumShortStayHours.Value)
-            throw new BusinessRuleException($"Minimum stay for this room is {room.MinimumShortStayHours} hours");
+        // 24 hours or more is an overnight stay
+        if (hours >= 24)
+            throw new BusinessRuleException("A short stay must be shorter than 24 hours; book it as an overnight stay");
 
-        if (room.MaximumShortStayHours.HasValue && hours > room.MaximumShortStayHours.Value)
-            throw new BusinessRuleException($"Maximum stay for this room is {room.MaximumShortStayHours} hours");
+        // Staff can lengthen or shorten a short stay; guests get the room's standard length
+        if (IsCurrentUserGuest() && room.ShortStayHours.HasValue && hours != room.ShortStayHours.Value)
+            throw new BusinessRuleException($"A short stay in room {room.RoomNumber} is {room.ShortStayHours} hours");
 
         return hours;
     }
+
+    private bool IsCurrentUserGuest() =>
+        _httpContextAccessor.HttpContext?.User.IsInRole(AppRoles.Guest) == true;
 
     /// <summary>
     /// Staff can charge any price instead of the room's default, higher or lower. It's stored as the
@@ -280,11 +285,9 @@ public class ReservationService : IReservationService
 
     private static decimal CalculateRoomPrice(Room room, DateTime checkIn, DateTime checkOut, BookingType bookingType)
     {
+        // A short stay is one flat price, however many hours staff booked it for
         if (bookingType == BookingType.ShortStay)
-        {
-            var hours = (int)Math.Ceiling((checkOut - checkIn).TotalHours);
-            return hours * (room.ShortStayHourlyRate ?? 0);
-        }
+            return room.ShortStayPrice ?? 0;
 
         var nights = Math.Max(1, (checkOut.Date - checkIn.Date).Days);
         return nights * room.PricePerNight;

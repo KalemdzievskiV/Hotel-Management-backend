@@ -2,6 +2,7 @@ using AutoMapper;
 using HotelManagement.Data;
 using HotelManagement.Infrastructure.Exceptions;
 using HotelManagement.Infrastructure.Mapping;
+using HotelManagement.Models.Constants;
 using HotelManagement.Models.DTOs;
 using HotelManagement.Models.Entities;
 using HotelManagement.Models.Enums;
@@ -62,9 +63,8 @@ public class ReservationServiceTests
             PricePerNight = 150,
             Status = RoomStatus.Available,
             AllowsShortStay = true,
-            ShortStayHourlyRate = 25,
-            MinimumShortStayHours = 2,
-            MaximumShortStayHours = 12
+            ShortStayHours = 4,
+            ShortStayPrice = 100
         };
 
         var guest = new Guest
@@ -146,7 +146,7 @@ public class ReservationServiceTests
 
         // Assert
         Assert.NotNull(result);
-        Assert.Equal(100, result.TotalAmount); // 4 hours × $25
+        Assert.Equal(100, result.TotalAmount); // flat short-stay price
         Assert.Equal(4, result.DurationInHours);
         Assert.Equal(PaymentStatus.Unpaid, result.PaymentStatus);
     }
@@ -250,53 +250,72 @@ public class ReservationServiceTests
     }
 
     [Fact]
-    public async Task CreateReservationAsync_ShortStayBelowMinimum_ThrowsException()
+    public async Task CreateReservationAsync_StaffChangesShortStayLength_KeepsFlatPrice()
     {
-        // Arrange
         await SeedTestData();
         var checkIn = DateTime.UtcNow.AddDays(1);
-        var checkOut = checkIn.AddHours(1); // Only 1 hour, minimum is 2
-        
-        var createDto = new CreateReservationDto
+
+        var result = await _service.CreateReservationAsync(new CreateReservationDto
         {
             HotelId = 1,
             RoomId = 1,
             GuestId = 1,
             BookingType = BookingType.ShortStay,
             CheckInDate = checkIn,
-            CheckOutDate = checkOut,
+            CheckOutDate = checkIn.AddHours(6), // room's standard is 4 hours
             NumberOfGuests = 2
-        };
+        });
 
-        // Act & Assert
-        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
-            () => _service.CreateReservationAsync(createDto));
-        Assert.Contains("Minimum stay", exception.Message);
+        Assert.Equal(6, result.DurationInHours);
+        Assert.Equal(100, result.TotalAmount);
     }
 
     [Fact]
-    public async Task CreateReservationAsync_ShortStayExceedsMaximum_ThrowsException()
+    public async Task CreateReservationAsync_ShortStayOf24Hours_ThrowsException()
     {
-        // Arrange
         await SeedTestData();
         var checkIn = DateTime.UtcNow.AddDays(1);
-        var checkOut = checkIn.AddHours(15); // 15 hours, maximum is 12
-        
-        var createDto = new CreateReservationDto
-        {
-            HotelId = 1,
-            RoomId = 1,
-            GuestId = 1,
-            BookingType = BookingType.ShortStay,
-            CheckInDate = checkIn,
-            CheckOutDate = checkOut,
-            NumberOfGuests = 2
-        };
 
-        // Act & Assert
         var exception = await Assert.ThrowsAsync<BusinessRuleException>(
-            () => _service.CreateReservationAsync(createDto));
-        Assert.Contains("Maximum stay", exception.Message);
+            () => _service.CreateReservationAsync(new CreateReservationDto
+            {
+                HotelId = 1,
+                RoomId = 1,
+                GuestId = 1,
+                BookingType = BookingType.ShortStay,
+                CheckInDate = checkIn,
+                CheckOutDate = checkIn.AddHours(24),
+                NumberOfGuests = 2
+            }));
+        Assert.Contains("shorter than 24 hours", exception.Message);
+    }
+
+    [Fact]
+    public async Task CreateReservationAsync_GuestBooksNonStandardShortStay_ThrowsException()
+    {
+        await SeedTestData();
+        _httpContextAccessorMock.Setup(x => x.HttpContext).Returns(new DefaultHttpContext
+        {
+            User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+            {
+                new Claim(ClaimTypes.NameIdentifier, "test-user-id"),
+                new Claim(ClaimTypes.Role, AppRoles.Guest)
+            }, "test"))
+        });
+        var checkIn = DateTime.UtcNow.AddDays(1);
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
+            () => _service.CreateReservationAsync(new CreateReservationDto
+            {
+                HotelId = 1,
+                RoomId = 1,
+                GuestId = 1,
+                BookingType = BookingType.ShortStay,
+                CheckInDate = checkIn,
+                CheckOutDate = checkIn.AddHours(6),
+                NumberOfGuests = 2
+            }));
+        Assert.Contains("is 4 hours", exception.Message);
     }
 
     [Fact]

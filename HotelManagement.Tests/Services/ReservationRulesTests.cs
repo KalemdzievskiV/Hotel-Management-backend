@@ -48,7 +48,7 @@ public class ReservationRulesTests
         _context.Rooms.Add(new Room
         {
             Id = 1, HotelId = 1, RoomNumber = "101", Capacity = 2, PricePerNight = 100,
-            AllowsShortStay = true, ShortStayHourlyRate = 20, MinimumShortStayHours = 1, MaximumShortStayHours = 12
+            AllowsShortStay = true, ShortStayHours = 4, ShortStayPrice = 80
         });
         _context.Guests.AddRange(
             new Guest { Id = 1, FirstName = "Ann", LastName = "One", Email = "ann@test.com", PhoneNumber = "1" },

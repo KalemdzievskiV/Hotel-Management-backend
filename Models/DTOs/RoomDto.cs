@@ -38,17 +38,14 @@ public class RoomDto
     [Range(0, 100000, ErrorMessage = "Price must be between 0 and 100,000")]
     public decimal PricePerNight { get; set; } = 0;
     
-    // Short Stay / Hourly Booking Support
+    // Short stay: fixed length at a flat price
     public bool AllowsShortStay { get; set; } = false;
-    
-    [Range(0, 10000, ErrorMessage = "Hourly rate must be between 0 and 10,000")]
-    public decimal? ShortStayHourlyRate { get; set; }
-    
-    [Range(1, 24, ErrorMessage = "Minimum hours must be between 1 and 24")]
-    public int? MinimumShortStayHours { get; set; } = 2;
-    
-    [Range(1, 24, ErrorMessage = "Maximum hours must be between 1 and 24")]
-    public int? MaximumShortStayHours { get; set; } = 12;
+
+    [Range(1, 23, ErrorMessage = "Short stay length must be between 1 and 23 hours")]
+    public int? ShortStayHours { get; set; } = 4;
+
+    [Range(0, 100000, ErrorMessage = "Short stay price must be between 0 and 100,000")]
+    public decimal? ShortStayPrice { get; set; }
     
     // Room Details
     [MaxLength(1000, ErrorMessage = "Description cannot exceed 1000 characters")]

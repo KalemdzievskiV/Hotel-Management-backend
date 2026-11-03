@@ -36,32 +36,17 @@ public class RoomDtoValidator : AbstractValidator<RoomDto>
             .GreaterThanOrEqualTo(0).WithMessage("Price per night cannot be negative")
             .LessThanOrEqualTo(100000).WithMessage("Price per night cannot exceed 100,000");
         
-        // Short Stay Hourly Rate
-        RuleFor(x => x.ShortStayHourlyRate)
-            .GreaterThan(0).WithMessage("Hourly rate must be greater than 0")
-            .LessThanOrEqualTo(10000).WithMessage("Hourly rate cannot exceed 10,000")
-            .When(x => x.AllowsShortStay && x.ShortStayHourlyRate.HasValue);
-        
-        // Short Stay: If AllowsShortStay is true, hourly rate must be provided
-        RuleFor(x => x.ShortStayHourlyRate)
-            .NotNull().WithMessage("Hourly rate is required when short stay is enabled")
+        // Short stay: a fixed length and a flat price, both required when enabled
+        RuleFor(x => x.ShortStayHours)
+            .NotNull().WithMessage("Short stay length is required when short stay is enabled")
+            .InclusiveBetween(1, 23).WithMessage("Short stay length must be between 1 and 23 hours")
             .When(x => x.AllowsShortStay);
-        
-        // Minimum Short Stay Hours
-        RuleFor(x => x.MinimumShortStayHours)
-            .InclusiveBetween(1, 24).WithMessage("Minimum hours must be between 1 and 24")
-            .When(x => x.AllowsShortStay && x.MinimumShortStayHours.HasValue);
-        
-        // Maximum Short Stay Hours
-        RuleFor(x => x.MaximumShortStayHours)
-            .InclusiveBetween(1, 24).WithMessage("Maximum hours must be between 1 and 24")
-            .When(x => x.AllowsShortStay && x.MaximumShortStayHours.HasValue);
-        
-        // Maximum must be greater than or equal to Minimum
-        RuleFor(x => x.MaximumShortStayHours)
-            .GreaterThanOrEqualTo(x => x.MinimumShortStayHours)
-            .WithMessage("Maximum hours must be greater than or equal to minimum hours")
-            .When(x => x.AllowsShortStay && x.MinimumShortStayHours.HasValue && x.MaximumShortStayHours.HasValue);
+
+        RuleFor(x => x.ShortStayPrice)
+            .NotNull().WithMessage("Short stay price is required when short stay is enabled")
+            .GreaterThan(0).WithMessage("Short stay price must be greater than 0")
+            .LessThanOrEqualTo(100000).WithMessage("Short stay price cannot exceed 100,000")
+            .When(x => x.AllowsShortStay);
         
         // Description
         RuleFor(x => x.Description)

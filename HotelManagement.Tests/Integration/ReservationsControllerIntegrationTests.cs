@@ -55,9 +55,8 @@ public class ReservationsControllerIntegrationTests : IClassFixture<CustomWebApp
             PricePerNight = 150,
             Status = RoomStatus.Available,
             AllowsShortStay = true,
-            ShortStayHourlyRate = 25,
-            MinimumShortStayHours = 2,
-            MaximumShortStayHours = 12
+            ShortStayHours = 4,
+            ShortStayPrice = 100
         };
         var roomResponse = await _client.PostAsJsonAsync("/api/Rooms", roomDto);
         var room = await roomResponse.Content.ReadFromJsonAsync<RoomDto>();

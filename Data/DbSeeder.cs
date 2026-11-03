@@ -199,12 +199,12 @@ public static class DbSeeder
                 ("106", RoomType.Twin,      2,  110m,  false, null),
                 ("107", RoomType.Family,    4,  180m,  false, null),
                 // Floor 2 - Deluxe rooms (allow short stay)
-                ("201", RoomType.Deluxe,    2,  200m,  true,  35m),
-                ("202", RoomType.Deluxe,    2,  200m,  true,  35m),
-                ("203", RoomType.Deluxe,    2,  200m,  true,  35m),
+                ("201", RoomType.Deluxe,    2,  200m,  true,  120m),
+                ("202", RoomType.Deluxe,    2,  200m,  true,  120m),
+                ("203", RoomType.Deluxe,    2,  200m,  true,  120m),
                 ("204", RoomType.Triple,    3,  160m,  false, null),
                 ("205", RoomType.Triple,    3,  160m,  false, null),
-                ("206", RoomType.Studio,    2,  150m,  true,  30m),
+                ("206", RoomType.Studio,    2,  150m,  true,  100m),
                 ("207", RoomType.Accessible,2,  110m,  false, null),
                 // Floor 3 - Suites
                 ("301", RoomType.Suite,     4,  350m,  false, null),
@@ -213,7 +213,7 @@ public static class DbSeeder
                 ("304", RoomType.Presidential, 6, 700m, false, null),
             };
 
-            foreach (var (number, type, capacity, price, shortStay, hourlyRate) in roomDefinitions)
+            foreach (var (number, type, capacity, price, shortStay, shortStayPrice) in roomDefinitions)
             {
                 var floor = int.Parse(number.Substring(0, 1));
                 context.Rooms.Add(new Models.Entities.Room
@@ -225,9 +225,8 @@ public static class DbSeeder
                     Capacity = capacity,
                     PricePerNight = price,
                     AllowsShortStay = shortStay,
-                    ShortStayHourlyRate = hourlyRate,
-                    MinimumShortStayHours = shortStay ? 2 : null,
-                    MaximumShortStayHours = shortStay ? 12 : null,
+                    ShortStayHours = shortStay ? 4 : null,
+                    ShortStayPrice = shortStayPrice,
                     Status = RoomStatus.Available,
                     IsActive = true,
                     BedType = type switch

@@ -39,18 +39,16 @@ public class Room
     [Range(0, 100000)]
     public decimal PricePerNight { get; set; } = 0;
     
-    // Short Stay / Hourly Booking Support
+    // Short stay: a fixed-length stay (e.g. 4 hours) sold at a flat price, not by the hour.
+    // Staff can book it for more or fewer hours; the price stays the same unless they change it.
     public bool AllowsShortStay { get; set; } = false;
-    
+
+    [Range(1, 23)]
+    public int? ShortStayHours { get; set; } = 4;
+
     [Column(TypeName = "decimal(10,2)")]
-    [Range(0, 10000)]
-    public decimal? ShortStayHourlyRate { get; set; }
-    
-    [Range(1, 24)]
-    public int? MinimumShortStayHours { get; set; } = 2;
-    
-    [Range(1, 24)]
-    public int? MaximumShortStayHours { get; set; } = 12;
+    [Range(0, 100000)]
+    public decimal? ShortStayPrice { get; set; }
     
     // Room Details
     [MaxLength(1000)]

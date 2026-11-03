@@ -985,12 +985,6 @@ namespace HotelManagement.Migrations
                     b.Property<DateTime?>("LastMaintenance")
                         .HasColumnType("timestamp without time zone");
 
-                    b.Property<int?>("MaximumShortStayHours")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("MinimumShortStayHours")
-                        .HasColumnType("integer");
-
                     b.Property<string>("Notes")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
@@ -1003,7 +997,10 @@ namespace HotelManagement.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
 
-                    b.Property<decimal?>("ShortStayHourlyRate")
+                    b.Property<int?>("ShortStayHours")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal?>("ShortStayPrice")
                         .HasColumnType("decimal(10,2)");
 
                     b.Property<int>("Status")
