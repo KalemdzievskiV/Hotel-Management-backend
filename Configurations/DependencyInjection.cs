@@ -65,6 +65,15 @@ namespace HotelManagement.Configurations
                 client.Timeout = TimeSpan.FromSeconds(15));
             services.AddHostedService<Services.Push.PushDispatcher>();
 
+            // Browser push (the web app, also when added to a phone's home screen)
+            services.AddSingleton<Services.Push.WebPushQueue>();
+            services.AddSingleton<Services.Push.IWebPushQueue>(sp => sp.GetRequiredService<Services.Push.WebPushQueue>());
+            services.AddHttpClient(nameof(Services.Push.WebPushDispatcher));
+            services.AddHostedService<Services.Push.WebPushDispatcher>();
+
+            // Check-in / check-out reminders 30 minutes ahead
+            services.AddHostedService<Services.Push.StayReminderService>();
+
             // Billing: the fake provider stands in until a real payment provider is chosen
             services.Configure<Services.Billing.BillingOptions>(configuration.GetSection(Services.Billing.BillingOptions.SectionName));
             services.AddSingleton<Services.Billing.FakeBillingProvider>();

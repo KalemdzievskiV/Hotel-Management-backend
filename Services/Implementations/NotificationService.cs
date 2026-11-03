@@ -18,8 +18,16 @@ public class NotificationService : INotificationService
         NotificationType.NewBooking,
         NotificationType.BookingCancelledByGuest,
         NotificationType.TaskAssigned,
-        NotificationType.TaskUrgent
+        NotificationType.TaskUrgent,
+        NotificationType.CheckInSoon,
+        NotificationType.CheckOutSoon
     ];
+
+    /// <summary>For now browsers only get pushes for these; the rest stay in the in-app list</summary>
+    private static readonly NotificationType[] WebPushTypes = [NotificationType.CheckInSoon, NotificationType.CheckOutSoon];
+
+    /// <summary>How long before a check-in or check-out its reminder goes out</summary>
+    public static readonly TimeSpan ReminderLead = TimeSpan.FromMinutes(30);
 
     private static readonly NotificationType[] HousekeeperTypes = [NotificationType.TaskAssigned, NotificationType.TaskUrgent];
 
@@ -27,6 +35,7 @@ public class NotificationService : INotificationService
 
     private readonly ApplicationDbContext _context;
     private readonly IPushQueue _push;
+    private readonly IWebPushQueue _webPush;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly TimeProvider _time;
     private readonly ILogger<NotificationService> _logger;
@@ -34,12 +43,14 @@ public class NotificationService : INotificationService
     public NotificationService(
         ApplicationDbContext context,
         IPushQueue push,
+        IWebPushQueue webPush,
         IHttpContextAccessor httpContextAccessor,
         TimeProvider time,
         ILogger<NotificationService> logger)
     {
         _context = context;
         _push = push;
+        _webPush = webPush;
         _httpContextAccessor = httpContextAccessor;
         _time = time;
         _logger = logger;
@@ -133,6 +144,77 @@ public class NotificationService : INotificationService
             });
         });
 
+    public async Task<int> SendStayRemindersAsync()
+    {
+        var utcNow = Now;
+        // Stay times are hotel wall-clock values; two days either side covers every time zone
+        // plus the hotel's standard check-in/out times added to date-only stays
+        var from = DateTime.SpecifyKind(utcNow.AddDays(-2), DateTimeKind.Unspecified);
+        var to = DateTime.SpecifyKind(utcNow.AddDays(2), DateTimeKind.Unspecified);
+
+        var reservations = await _context.Reservations
+            .Include(r => r.Hotel)
+            .Include(r => r.Room)
+            .Include(r => r.Guest)
+            .Where(r => ((r.Status == ReservationStatus.Pending || r.Status == ReservationStatus.Confirmed)
+                            && r.CheckInDate >= from && r.CheckInDate <= to)
+                     || (r.Status == ReservationStatus.CheckedIn && r.CheckOutDate >= from && r.CheckOutDate <= to))
+            .ToListAsync();
+
+        var due = new List<(Reservation Reservation, NotificationType Type, DateTime At)>();
+        foreach (var r in reservations)
+        {
+            // Without the hotel's time zone there's no telling when 30 minutes before is
+            var hotelNow = HotelNow(r.Hotel, utcNow);
+            if (hotelNow == null)
+                continue;
+
+            var window = StayAvailability.GetWindow(r.CheckInDate, r.CheckOutDate, r.BookingType, r.Hotel);
+            var (type, at) = r.Status == ReservationStatus.CheckedIn
+                ? (NotificationType.CheckOutSoon, window.End)
+                : (NotificationType.CheckInSoon, window.Start);
+            if (hotelNow >= at - ReminderLead && hotelNow < at)
+                due.Add((r, type, at));
+        }
+        if (due.Count == 0)
+            return 0;
+
+        // Each reminder goes out once per reservation
+        var dueIds = due.Select(d => (int?)d.Reservation.Id).ToList();
+        var sent = await _context.Notifications
+            .Where(n => dueIds.Contains(n.ReservationId)
+                && (n.Type == NotificationType.CheckInSoon || n.Type == NotificationType.CheckOutSoon))
+            .Select(n => new { n.ReservationId, n.Type })
+            .Distinct()
+            .ToListAsync();
+
+        var count = 0;
+        foreach (var (r, type, at) in due)
+        {
+            if (sent.Any(s => s.ReservationId == r.Id && s.Type == type))
+                continue;
+
+            var checkIn = type == NotificationType.CheckInSoon;
+            await NotifyAsync(await HotelManagerIdsAsync(r.HotelId), new Notification
+            {
+                Type = type,
+                Title = $"{(checkIn ? "Check-in" : "Check-out")} at {at.ToString("HH:mm", CultureInfo.InvariantCulture)}",
+                Body = $"{r.Guest.FirstName} {r.Guest.LastName} · Room {r.Room.RoomNumber}",
+                HotelId = r.HotelId,
+                ReservationId = r.Id
+            });
+            count++;
+        }
+        return count;
+    }
+
+    /// <summary>The hotel's local time, or null when its time zone isn't known</summary>
+    private static DateTime? HotelNow(Hotel hotel, DateTime utcNow) =>
+        TryFindTimeZone(hotel.TimeZone) is { } zone ? TimeZoneInfo.ConvertTimeFromUtc(utcNow, zone) : null;
+
+    private static TimeZoneInfo? TryFindTimeZone(string? id) =>
+        !string.IsNullOrWhiteSpace(id) && TimeZoneInfo.TryFindSystemTimeZoneById(id, out var zone) ? zone : null;
+
     private async Task SafelyAsync(string name, Func<Task> action)
     {
         try
@@ -184,7 +266,24 @@ public class NotificationService : INotificationService
             var notification = notifications.First(n => n.UserId == device.UserId);
             _push.Enqueue(new PushMessage(device.Token, notification.Title, notification.Body, PushData(notification)));
         }
+
+        if (!WebPushTypes.Contains(template.Type))
+            return;
+
+        var browsers = await _context.WebPushSubscriptions
+            .Where(s => recipients.Contains(s.UserId) && !muted.Contains(s.UserId))
+            .ToListAsync();
+        foreach (var browser in browsers)
+        {
+            var notification = notifications.First(n => n.UserId == browser.UserId);
+            _webPush.Enqueue(new WebPushMessage(browser.Endpoint, browser.P256dh, browser.Auth,
+                notification.Title, notification.Body, WebUrl(notification), $"{notification.Type}-{notification.ReservationId}"));
+        }
     }
+
+    /// <summary>The web app page a tapped browser push opens</summary>
+    private static string WebUrl(Notification n) =>
+        n.ReservationId.HasValue ? $"/dashboard/reservations/{n.ReservationId}" : "/dashboard";
 
     /// <summary>What the app needs to open the right screen when the push is tapped</summary>
     private static Dictionary<string, object?> PushData(Notification n)
@@ -321,6 +420,55 @@ public class NotificationService : INotificationService
         device.Platform = dto.Platform;
         device.LastSeenAt = Now;
         await _context.SaveChangesAsync();
+
+        await FillHotelTimeZoneAsync(userId, dto.TimeZone);
+    }
+
+    public async Task RegisterWebPushAsync(string userId, WebPushSubscriptionDto dto)
+    {
+        var subscription = await _context.WebPushSubscriptions.FirstOrDefaultAsync(s => s.Endpoint == dto.Endpoint);
+        if (subscription == null)
+        {
+            subscription = new WebPushSubscription { Endpoint = dto.Endpoint, CreatedAt = Now };
+            _context.WebPushSubscriptions.Add(subscription);
+        }
+
+        subscription.UserId = userId;
+        subscription.P256dh = dto.Keys.P256dh;
+        subscription.Auth = dto.Keys.Auth;
+        subscription.LastSeenAt = Now;
+        await _context.SaveChangesAsync();
+
+        await FillHotelTimeZoneAsync(userId, dto.TimeZone);
+    }
+
+    public async Task UnregisterWebPushAsync(string userId, string endpoint)
+    {
+        var subscription = await _context.WebPushSubscriptions.FirstOrDefaultAsync(s => s.Endpoint == endpoint && s.UserId == userId);
+        if (subscription == null)
+            return;
+
+        _context.WebPushSubscriptions.Remove(subscription);
+        await _context.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Hotels have no time zone setting yet, so the first staff browser or phone that registers
+    /// for pushes sets it for the hotels the user owns or works at
+    /// </summary>
+    private async Task FillHotelTimeZoneAsync(string userId, string? timeZone)
+    {
+        if (TryFindTimeZone(timeZone) == null)
+            return;
+
+        var userHotelId = await _context.Users.Where(u => u.Id == userId).Select(u => u.HotelId).FirstOrDefaultAsync();
+        var hotels = await _context.Hotels
+            .Where(h => h.TimeZone == null && (h.OwnerId == userId || h.Id == userHotelId))
+            .ToListAsync();
+        foreach (var hotel in hotels)
+            hotel.TimeZone = timeZone;
+        if (hotels.Count > 0)
+            await _context.SaveChangesAsync();
     }
 
     public async Task UnregisterDeviceAsync(string userId, string token)

@@ -1,10 +1,11 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
     <PropertyGroup>
         <TargetFramework>net9.0</TargetFramework>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
-    </PropertyGroup>
+      <UserSecretsId>4fa37478-3e1a-4c84-8264-a23089c52916</UserSecretsId>
+  </PropertyGroup>
 
     <ItemGroup>
       <!-- Tests live in their own project next to this one -->
@@ -25,6 +26,7 @@
         <PrivateAssets>all</PrivateAssets>
       </PackageReference>
       <PackageReference Include="Swashbuckle.AspNetCore" Version="9.0.6" />
+      <PackageReference Include="WebPush" Version="1.0.12" />
     </ItemGroup>
 
 </Project>

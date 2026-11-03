@@ -28,6 +28,7 @@ namespace HotelManagement.Data
         public DbSet<Notification> Notifications { get; set; }
         public DbSet<DeviceToken> DeviceTokens { get; set; }
         public DbSet<NotificationPreference> NotificationPreferences { get; set; }
+        public DbSet<WebPushSubscription> WebPushSubscriptions { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -230,6 +231,16 @@ namespace HotelManagement.Data
 
             modelBuilder.Entity<DeviceToken>()
                 .HasIndex(d => d.Token)
+                .IsUnique();
+
+            modelBuilder.Entity<WebPushSubscription>()
+                .HasOne(s => s.User)
+                .WithMany()
+                .HasForeignKey(s => s.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<WebPushSubscription>()
+                .HasIndex(s => s.Endpoint)
                 .IsUnique();
 
             modelBuilder.Entity<NotificationPreference>()

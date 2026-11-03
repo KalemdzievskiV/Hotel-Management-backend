@@ -22,5 +22,11 @@ public enum NotificationType
     TaskAssigned = 5,
 
     /// <summary>A task already assigned to the user became urgent</summary>
-    TaskUrgent = 6
+    TaskUrgent = 6,
+
+    /// <summary>A guest is due to check in within 30 minutes (to the hotel's managers)</summary>
+    CheckInSoon = 7,
+
+    /// <summary>A checked-in guest is due to check out within 30 minutes (to the hotel's managers)</summary>
+    CheckOutSoon = 8
 }

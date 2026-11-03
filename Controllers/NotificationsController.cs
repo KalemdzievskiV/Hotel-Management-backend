@@ -3,6 +3,8 @@ using HotelManagement.Models.DTOs;
 using HotelManagement.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
+using HotelManagement.Services.Push;
 
 namespace HotelManagement.Controllers;
 
@@ -15,10 +17,12 @@ namespace HotelManagement.Controllers;
 public class NotificationsController : ControllerBase
 {
     private readonly INotificationService _notifications;
+    private readonly PushOptions _pushOptions;
 
-    public NotificationsController(INotificationService notifications)
+    public NotificationsController(INotificationService notifications, IOptions<PushOptions> pushOptions)
     {
         _notifications = notifications;
+        _pushOptions = pushOptions.Value;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -58,6 +62,29 @@ public class NotificationsController : ControllerBase
     public async Task<IActionResult> UnregisterDevice([FromBody] UnregisterDeviceDto dto)
     {
         await _notifications.UnregisterDeviceAsync(UserId, dto.Token);
+        return NoContent();
+    }
+
+    /// <summary>The VAPID public key browsers subscribe with; 404 while web push isn't set up</summary>
+    [HttpGet("web-push/key")]
+    public IActionResult GetWebPushKey() =>
+        _pushOptions.WebPushEnabled ? Ok(new { publicKey = _pushOptions.VapidPublicKey }) : NotFound();
+
+    [HttpPost("web-push")]
+    public async Task<IActionResult> RegisterWebPush([FromBody] WebPushSubscriptionDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(dto.Endpoint) || !Uri.TryCreate(dto.Endpoint, UriKind.Absolute, out var endpoint)
+            || endpoint.Scheme != Uri.UriSchemeHttps || string.IsNullOrWhiteSpace(dto.Keys.P256dh) || string.IsNullOrWhiteSpace(dto.Keys.Auth))
+            return BadRequest(new { message = "Invalid push subscription" });
+
+        await _notifications.RegisterWebPushAsync(UserId, dto);
+        return NoContent();
+    }
+
+    [HttpDelete("web-push")]
+    public async Task<IActionResult> UnregisterWebPush([FromBody] UnregisterWebPushDto dto)
+    {
+        await _notifications.UnregisterWebPushAsync(UserId, dto.Endpoint);
         return NoContent();
     }
 

@@ -29,11 +29,35 @@ public class RegisterDeviceDto
 
     /// <summary>"android" or "ios"</summary>
     public string Platform { get; set; } = string.Empty;
+
+    /// <summary>The phone's IANA time zone; fills in the hotel's when it has none yet</summary>
+    public string? TimeZone { get; set; }
 }
 
 public class UnregisterDeviceDto
 {
     public string Token { get; set; } = string.Empty;
+}
+
+/// <summary>A browser's push subscription, as PushManager.subscribe() returns it</summary>
+public class WebPushSubscriptionDto
+{
+    public string Endpoint { get; set; } = string.Empty;
+    public WebPushKeysDto Keys { get; set; } = new();
+
+    /// <summary>The browser's IANA time zone; fills in the hotel's when it has none yet</summary>
+    public string? TimeZone { get; set; }
+}
+
+public class WebPushKeysDto
+{
+    public string P256dh { get; set; } = string.Empty;
+    public string Auth { get; set; } = string.Empty;
+}
+
+public class UnregisterWebPushDto
+{
+    public string Endpoint { get; set; } = string.Empty;
 }
 
 public class NotificationPreferenceDto

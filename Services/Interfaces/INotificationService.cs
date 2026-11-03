@@ -24,6 +24,12 @@ public interface INotificationService
     /// <summary>Tells the assignee that a task they already had became urgent</summary>
     Task TaskBecameUrgentAsync(HousekeepingTaskDto task);
 
+    /// <summary>
+    /// Tells the hotel's managers about check-ins and check-outs due within 30 minutes, once per
+    /// reservation. Run every minute. Returns how many reminders went out.
+    /// </summary>
+    Task<int> SendStayRemindersAsync();
+
     Task<NotificationPageDto> GetPageAsync(string userId, int page, int pageSize);
     Task<int> GetUnreadCountAsync(string userId);
 
@@ -36,6 +42,12 @@ public interface INotificationService
 
     /// <summary>Stops pushes to a phone, e.g. on sign-out; another user's token is left alone</summary>
     Task UnregisterDeviceAsync(string userId, string token);
+
+    /// <summary>Links a browser's push subscription to the user (moving it from whoever had it)</summary>
+    Task RegisterWebPushAsync(string userId, WebPushSubscriptionDto dto);
+
+    /// <summary>Stops pushes to a browser; another user's subscription is left alone</summary>
+    Task UnregisterWebPushAsync(string userId, string endpoint);
 
     /// <summary>The push settings for the types that apply to the user's roles</summary>
     Task<IReadOnlyList<NotificationPreferenceDto>> GetPreferencesAsync(string userId, IList<string> roles);

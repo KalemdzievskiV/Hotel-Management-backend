@@ -68,6 +68,13 @@ public class Hotel
     
     [MaxLength(100)]
     public string? CheckOutTime { get; set; } = "11:00"; // Default check-out time
+
+    /// <summary>
+    /// IANA time zone (e.g. "Europe/Belgrade"). Stay times are stored as hotel wall-clock time,
+    /// so this is what turns them into real moments, e.g. for check-in reminders.
+    /// </summary>
+    [MaxLength(64)]
+    public string? TimeZone { get; set; }
     
     // Cleaning Buffer Time
     [Range(0, 24)]
