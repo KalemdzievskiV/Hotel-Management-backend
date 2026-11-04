@@ -18,11 +18,13 @@ public class NotificationsController : ControllerBase
 {
     private readonly INotificationService _notifications;
     private readonly PushOptions _pushOptions;
+    private readonly IWebPushSender _webPushSender;
 
-    public NotificationsController(INotificationService notifications, IOptions<PushOptions> pushOptions)
+    public NotificationsController(INotificationService notifications, IOptions<PushOptions> pushOptions, IWebPushSender webPushSender)
     {
         _notifications = notifications;
         _pushOptions = pushOptions.Value;
+        _webPushSender = webPushSender;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -86,6 +88,35 @@ public class NotificationsController : ControllerBase
     {
         await _notifications.UnregisterWebPushAsync(UserId, dto.Endpoint);
         return NoContent();
+    }
+
+    /// <summary>
+    /// Sends a test push to this browser right away and reports what the push service said,
+    /// so a broken setup shows its error instead of failing silently
+    /// </summary>
+    [HttpPost("web-push/test")]
+    public async Task<IActionResult> TestWebPush([FromBody] TestWebPushDto dto, CancellationToken cancellationToken)
+    {
+        if (!_pushOptions.WebPushEnabled)
+            return NotFound(new { message = "Push notifications aren't set up on the server" });
+
+        var message = await _notifications.BuildTestWebPushAsync(UserId, dto.Endpoint);
+        if (message == null)
+            return NotFound(new { message = "This device isn't registered for notifications. Turn them off and on again." });
+
+        var result = await _webPushSender.SendAsync(message, cancellationToken);
+        switch (result.Status)
+        {
+            case WebPushSendStatus.Sent:
+                return NoContent();
+            case WebPushSendStatus.Gone:
+                await _notifications.UnregisterWebPushAsync(UserId, dto.Endpoint);
+                return StatusCode(StatusCodes.Status410Gone,
+                    new { message = "This device's notification subscription expired. Turn notifications off and on again." });
+            default:
+                return StatusCode(StatusCodes.Status502BadGateway,
+                    new { message = $"The push service refused the notification: {result.Error}" });
+        }
     }
 
     [HttpGet("preferences")]

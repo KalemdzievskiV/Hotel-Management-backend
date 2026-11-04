@@ -55,6 +55,11 @@ public class WebPushKeysDto
     public string Auth { get; set; } = string.Empty;
 }
 
+public class TestWebPushDto
+{
+    public string Endpoint { get; set; } = string.Empty;
+}
+
 public class UnregisterWebPushDto
 {
     public string Endpoint { get; set; } = string.Empty;

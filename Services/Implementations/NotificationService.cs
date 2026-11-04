@@ -24,7 +24,8 @@ public class NotificationService : INotificationService
     ];
 
     /// <summary>For now browsers only get pushes for these; the rest stay in the in-app list</summary>
-    private static readonly NotificationType[] WebPushTypes = [NotificationType.CheckInSoon, NotificationType.CheckOutSoon];
+    private static readonly NotificationType[] WebPushTypes =
+        [NotificationType.NewBooking, NotificationType.CheckInSoon, NotificationType.CheckOutSoon];
 
     /// <summary>How long before a check-in or check-out its reminder goes out</summary>
     public static readonly TimeSpan ReminderLead = TimeSpan.FromMinutes(30);
@@ -440,6 +441,16 @@ public class NotificationService : INotificationService
         await _context.SaveChangesAsync();
 
         await FillHotelTimeZoneAsync(userId, dto.TimeZone);
+    }
+
+    public async Task<WebPushMessage?> BuildTestWebPushAsync(string userId, string endpoint)
+    {
+        var subscription = await _context.WebPushSubscriptions
+            .FirstOrDefaultAsync(s => s.Endpoint == endpoint && s.UserId == userId);
+        return subscription == null
+            ? null
+            : new WebPushMessage(subscription.Endpoint, subscription.P256dh, subscription.Auth,
+                "Test notification", "Notifications are working on this device.", "/dashboard", "test");
     }
 
     public async Task UnregisterWebPushAsync(string userId, string endpoint)

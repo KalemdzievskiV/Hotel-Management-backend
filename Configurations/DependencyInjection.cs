@@ -68,7 +68,8 @@ namespace HotelManagement.Configurations
             // Browser push (the web app, also when added to a phone's home screen)
             services.AddSingleton<Services.Push.WebPushQueue>();
             services.AddSingleton<Services.Push.IWebPushQueue>(sp => sp.GetRequiredService<Services.Push.WebPushQueue>());
-            services.AddHttpClient(nameof(Services.Push.WebPushDispatcher));
+            services.AddHttpClient(nameof(Services.Push.WebPushSender));
+            services.AddSingleton<Services.Push.IWebPushSender, Services.Push.WebPushSender>();
             services.AddHostedService<Services.Push.WebPushDispatcher>();
 
             // Check-in / check-out reminders 30 minutes ahead

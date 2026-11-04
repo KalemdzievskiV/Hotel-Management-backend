@@ -1,4 +1,5 @@
 using HotelManagement.Models.DTOs;
+using HotelManagement.Services.Push;
 
 namespace HotelManagement.Services.Interfaces;
 
@@ -45,6 +46,9 @@ public interface INotificationService
 
     /// <summary>Links a browser's push subscription to the user (moving it from whoever had it)</summary>
     Task RegisterWebPushAsync(string userId, WebPushSubscriptionDto dto);
+
+    /// <summary>A test push for one of the user's browsers; null when that browser isn't theirs</summary>
+    Task<WebPushMessage?> BuildTestWebPushAsync(string userId, string endpoint);
 
     /// <summary>Stops pushes to a browser; another user's subscription is left alone</summary>
     Task UnregisterWebPushAsync(string userId, string endpoint);
